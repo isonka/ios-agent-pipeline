@@ -8,7 +8,7 @@ import { runTester } from "./agents/tester.js";
 import { runPRReviewer } from "./agents/prReviewer.js";
 import * as jira from "./jira/client.js";
 import { createDraftPullRequest } from "./github/cloudClient.js";
-import { buildProjectContext, formatProjectContextForPrompt } from "./project/context.js";
+import { getProjectContextForPromptCached } from "./project/context.js";
 
 const app = express();
 app.use(express.json());
@@ -118,11 +118,6 @@ function getStatusTransition(changelog) {
   return { from: item.fromString, to: item.toString };
 }
 
-async function getProjectContextForAgents() {
-  const context = await buildProjectContext();
-  return formatProjectContextForPrompt(context);
-}
-
 // ── Manual endpoint: create subtasks from parent story ────────────────────
 app.post("/pipeline/create-subtasks", async (req, res) => {
   if (!verifySignature(req)) {
@@ -150,9 +145,8 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       });
     }
 
-    const projectContext = await getProjectContextForAgents();
     const normalized = normalizeIssue(issue);
-    const breakdown = await runArchitect(normalized, projectContext);
+    const breakdown = await runArchitect(normalized);
     const subtaskKeys = [];
 
     for (const subtask of breakdown.subtasks || []) {
@@ -198,7 +192,7 @@ app.post("/jira/webhook", async (req, res) => {
     }
 
     if (transition.to === IN_PROGRESS_STATUS) {
-      await getProjectContextForAgents();
+      await getProjectContextForPromptCached();
       const devResult = await runDeveloper(normalized);
       await jira.addComment(issue.key, developerComment(devResult));
       return;

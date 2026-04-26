@@ -67,3 +67,23 @@ test("formatProjectContextForPrompt includes skills summary", async () => {
   assert.match(formatted, /CLAUDE body/);
   assert.match(formatted, /skills: one.md, two.md/);
 });
+
+test("getProjectContextForPromptCached builds once and reuses cache", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pipeline-context-cache-"));
+  process.env.TARGET_PROJECT_PATH = dir;
+
+  await writeFile(path.join(dir, "README.md"), "Initial README");
+  await writeFile(path.join(dir, "CLAUDE.md"), "Initial CLAUDE");
+
+  const ctx = await importFreshContextModule();
+  ctx.resetProjectContextCache();
+
+  const first = await ctx.getProjectContextForPromptCached();
+  await writeFile(path.join(dir, "README.md"), "Changed README");
+  const second = await ctx.getProjectContextForPromptCached();
+  const refreshed = await ctx.getProjectContextForPromptCached({ forceRefresh: true });
+
+  assert.equal(first, second);
+  assert.match(first, /Initial README/);
+  assert.match(refreshed, /Changed README/);
+});

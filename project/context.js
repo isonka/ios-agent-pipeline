@@ -4,6 +4,7 @@ import path from "node:path";
 const MANDATORY_DOCS = ["README.md", "CLAUDE.md"];
 const OPTIONAL_SKILLS_DIRS = ["skills", ".cursor/skills", ".claude/skills"];
 const MAX_DOC_CHARS = 4000;
+let cachedFormattedContext = null;
 
 function shorten(text, maxChars = MAX_DOC_CHARS) {
   if (!text) return "";
@@ -95,4 +96,18 @@ export function formatProjectContextForPrompt(context) {
     "Optional skills inventory:",
     skillsSummary,
   ].join("\n");
+}
+
+export async function getProjectContextForPromptCached({ forceRefresh = false } = {}) {
+  if (!forceRefresh && cachedFormattedContext) {
+    return cachedFormattedContext;
+  }
+
+  const built = await buildProjectContext();
+  cachedFormattedContext = formatProjectContextForPrompt(built);
+  return cachedFormattedContext;
+}
+
+export function resetProjectContextCache() {
+  cachedFormattedContext = null;
 }
