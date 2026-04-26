@@ -51,6 +51,13 @@ function architectComment(issueKey, breakdown, subtaskKeys) {
 }
 
 function developerComment(result) {
+  const decision = result.developerDecision || {};
+  const usedSkill = typeof decision.usedSkill === "boolean" ? decision.usedSkill : null;
+  const fallbackUsed = typeof decision.fallbackUsed === "boolean" ? decision.fallbackUsed : null;
+  const skillFiles = Array.isArray(decision.skillFilesUsed) && decision.skillFilesUsed.length
+    ? decision.skillFilesUsed.map((f) => `- ${f}`).join("\n")
+    : "- none";
+
   return [
     "Developer execution contract:",
     "",
@@ -58,6 +65,13 @@ function developerComment(result) {
     "",
     "Test stubs:",
     result.testStubs || "No stubs generated.",
+    "",
+    "Developer decision:",
+    `- usedSkill: ${usedSkill === null ? "unknown" : usedSkill}`,
+    `- fallbackUsed: ${fallbackUsed === null ? "unknown" : fallbackUsed}`,
+    "- skillFilesUsed:",
+    skillFiles,
+    `- reason: ${decision.reason || "not provided"}`,
   ].join("\n");
 }
 

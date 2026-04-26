@@ -28,11 +28,13 @@ JSON only. No fences. No preamble:
  * @param {object} issue  Gitea issue object
  * @returns {Promise<{summary, subtasks, risks, dependencies}>}
  */
-export async function runArchitect(issue, projectContext = "") {
+export async function runArchitect(issue, projectContext = "", deps = {}) {
+  const llmCall = deps.llmCall || callClaude;
+  const getProjectContext = deps.getProjectContext || getProjectContextForPromptCached;
   const issueId = issue.key || issue.number || "UNKNOWN";
   const title = issue.title || issue.fields?.summary || "Untitled";
   const body = issue.body || issue.fields?.description || "No description.";
-  const resolvedProjectContext = projectContext || await getProjectContextForPromptCached();
+  const resolvedProjectContext = projectContext || await getProjectContext();
   const userMessage = `Break down. iOS subtasks.
 
 #${issueId}: ${title}
@@ -46,7 +48,7 @@ Hard constraint:
 - Each subtask must be directly executable with zero interpretation.
 - Include exact file paths/modules, acceptance checks, and explicit done criteria.`;
 
-  const raw = await callClaude(SYSTEM_PROMPT, userMessage);
+  const raw = await llmCall(SYSTEM_PROMPT, userMessage);
 
   try {
     return JSON.parse(raw.replace(/```json|```/g, "").trim());

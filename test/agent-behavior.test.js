@@ -1,0 +1,107 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { runArchitect } from "../agents/architect.js";
+import { runDeveloper } from "../agents/developer.js";
+
+test("runArchitect uses provided project context and parses JSON", async () => {
+  let capturedUserMessage = "";
+  const issue = { key: "MP-1", title: "Add onboarding" };
+
+  const result = await runArchitect(
+    issue,
+    "PROJECT_CTX",
+    {
+      llmCall: async (_system, userMessage) => {
+        capturedUserMessage = userMessage;
+        return JSON.stringify({
+          summary: "ok",
+          subtasks: [{ title: "t1", body: "b1", estimate: "S" }],
+          risks: [],
+          dependencies: [],
+        });
+      },
+    }
+  );
+
+  assert.equal(result.summary, "ok");
+  assert.match(capturedUserMessage, /PROJECT_CTX/);
+  assert.match(capturedUserMessage, /#MP-1: Add onboarding/);
+});
+
+test("runArchitect fetches context when none is provided", async () => {
+  let getContextCalled = 0;
+  let capturedUserMessage = "";
+
+  await runArchitect(
+    { key: "MP-2", title: "Improve search" },
+    "",
+    {
+      getProjectContext: async () => {
+        getContextCalled += 1;
+        return "CTX_FROM_CACHE";
+      },
+      llmCall: async (_system, userMessage) => {
+        capturedUserMessage = userMessage;
+        return JSON.stringify({
+          summary: "ok",
+          subtasks: [],
+          risks: [],
+          dependencies: [],
+        });
+      },
+    }
+  );
+
+  assert.equal(getContextCalled, 1);
+  assert.match(capturedUserMessage, /CTX_FROM_CACHE/);
+});
+
+test("runDeveloper includes execution policy and context", async () => {
+  let capturedUserMessage = "";
+  const issue = { key: "MP-3", title: "Refactor list cells", body: "Task details" };
+
+  const result = await runDeveloper(issue, {
+    getProjectContext: async () => "DEV_CONTEXT",
+    llmCall: async (_system, userMessage) => {
+      capturedUserMessage = userMessage;
+      return JSON.stringify({
+        implementationPlan: "plan",
+        prTitle: "title",
+        prDescription: "desc",
+        branchName: "feature/mp-3-refactor-list-cells",
+        testStubs: "tests",
+        developerDecision: {
+          usedSkill: true,
+          skillFilesUsed: ["skills/ios-networking.md"],
+          fallbackUsed: false,
+          reason: "Relevant networking skill matched task.",
+        },
+      });
+    },
+  });
+
+  assert.equal(result.prTitle, "title");
+  assert.equal(result.developerDecision.usedSkill, true);
+  assert.deepEqual(result.developerDecision.skillFilesUsed, ["skills/ios-networking.md"]);
+  assert.match(capturedUserMessage, /DEV_CONTEXT/);
+  assert.match(capturedUserMessage, /Use project skills when relevant/);
+  assert.match(
+    capturedUserMessage,
+    /If no relevant skill, implement via existing module examples from project docs/
+  );
+});
+
+test("runDeveloper throws clear error on invalid model JSON", async () => {
+  await assert.rejects(
+    () =>
+      runDeveloper(
+        { key: "MP-4", title: "Fix crash" },
+        {
+          getProjectContext: async () => "CTX",
+          llmCall: async () => "not-json",
+        }
+      ),
+    /Developer returned invalid JSON/
+  );
+});

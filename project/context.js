@@ -4,6 +4,8 @@ import path from "node:path";
 const MANDATORY_DOCS = ["README.md", "CLAUDE.md"];
 const OPTIONAL_SKILLS_DIRS = ["skills", ".cursor/skills", ".claude/skills"];
 const MAX_DOC_CHARS = 4000;
+const MAX_SKILL_FILES = 12;
+const MAX_SKILL_CHARS = 1200;
 let cachedFormattedContext = null;
 
 function shorten(text, maxChars = MAX_DOC_CHARS) {
@@ -57,11 +59,23 @@ export async function buildProjectContext() {
   }
 
   const skills = [];
+  let skillCount = 0;
   for (const skillsDir of OPTIONAL_SKILLS_DIRS) {
     const absolute = path.join(projectPath, skillsDir);
     const files = await listFilesIfExists(absolute);
     if (files.length) {
-      skills.push({ directory: skillsDir, files });
+      const skillsWithSnippets = [];
+      for (const file of files) {
+        if (skillCount >= MAX_SKILL_FILES) break;
+        const content = await readIfExists(path.join(absolute, file));
+        if (!content) continue;
+        skillsWithSnippets.push({
+          file,
+          snippet: shorten(content, MAX_SKILL_CHARS),
+        });
+        skillCount += 1;
+      }
+      skills.push({ directory: skillsDir, files, snippets: skillsWithSnippets });
     }
   }
 
@@ -82,6 +96,17 @@ export function formatProjectContextForPrompt(context) {
         .join("\n")
     : "- none found";
 
+  const skillsContent = context.optionalSkills.length
+    ? context.optionalSkills
+        .map((bucket) => {
+          const snippets = (bucket.snippets || [])
+            .map((entry) => `${bucket.directory}/${entry.file}:\n${entry.snippet}`)
+            .join("\n\n");
+          return snippets ? snippets : `${bucket.directory}: no readable skill content`;
+        })
+        .join("\n\n")
+    : "none";
+
   return [
     `Project path: ${context.projectPath}`,
     "",
@@ -95,6 +120,9 @@ export function formatProjectContextForPrompt(context) {
     "",
     "Optional skills inventory:",
     skillsSummary,
+    "",
+    "Optional skills content (use only when relevant to this task):",
+    skillsContent,
   ].join("\n");
 }
 
