@@ -30,6 +30,12 @@ AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-5
+LLM_PROVIDER=bedrock
+LLM_MAX_TOKENS=4096
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-3-5-sonnet-latest
 
 JIRA_BASE_URL=https://your-domain.atlassian.net
 JIRA_EMAIL=you@company.com
@@ -87,3 +93,9 @@ Project context requirements:
 - `README.md` and `CLAUDE.md` are mandatory in that repo.
 - `skills` content is optional and used as extra context if present.
 - Architect/Developer stages are blocked when mandatory docs are missing.
+
+LLM provider selection:
+
+- Set `LLM_PROVIDER` to `bedrock`, `openai`, or `anthropic`.
+- Default is `bedrock`.
+- Bedrock remains the first/default provider and uses AWS credentials.
