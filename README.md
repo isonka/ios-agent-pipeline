@@ -48,6 +48,12 @@ JIRA_BRANCH_FIELD_ID=customfield_12345
 JIRA_BOARD_ID=
 JIRA_BOARD_NAME=SMB General Classifieds
 TARGET_PROJECT_PATH=/absolute/path/to/project
+IOS_TEST_SCHEME=YourAppScheme
+IOS_WORKSPACE=YourApp.xcworkspace
+IOS_PROJECT=
+IOS_SIMULATOR_NAME=Marktplaats iPhone 14 Pro
+IOS_SIMULATOR_OS=18.2
+IOS_SNAPSHOT_TEST_FILE=Tests/GeneratedSnapshotTests.swift
 
 GITHUB_TOKEN=...
 GITHUB_OWNER=your-org
@@ -79,7 +85,7 @@ Configure Jira webhook to call `http://localhost:3000/jira/webhook` for:
 When status changes:
 
 - To `IN PROGRESS`: Developer agent posts execution contract.
-- To `IN REVIEW`: Tester agent posts QA report, draft PR is created in GitHub, reviewer verdict is added back to Jira, then issue is transitioned to `DONE`.
+- To `IN REVIEW`: Tester agent posts QA report, manual validation findings, integration-test assessment, ensures snapshot tests exist, runs `xcodebuild test` on configured simulator, then draft PR is created in GitHub, reviewer verdict is added back to Jira, and issue transitions to `DONE` only if checks pass.
 
 Board scoping (optional):
 
@@ -93,6 +99,13 @@ Project context requirements:
 - `README.md` and `CLAUDE.md` are mandatory in that repo.
 - `skills` content is optional and used as extra context if present.
 - Architect/Developer stages are blocked when mandatory docs are missing.
+
+Tester execution requirements:
+
+- `IOS_TEST_SCHEME` is required for running tests.
+- Set `IOS_WORKSPACE` or `IOS_PROJECT` (auto-detection is attempted if both empty).
+- Snapshot baseline simulator defaults to `Marktplaats iPhone 14 Pro` on iOS `18.2`.
+- Tester marks ticket as failed if manual behavior is not as expected or integration-test status is `FAIL`.
 
 LLM provider selection:
 

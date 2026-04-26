@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { runArchitect } from "../agents/architect.js";
 import { runDeveloper } from "../agents/developer.js";
+import { runTester } from "../agents/tester.js";
 
 test("runArchitect uses provided project context and parses JSON", async () => {
   let capturedUserMessage = "";
@@ -104,4 +105,41 @@ test("runDeveloper throws clear error on invalid model JSON", async () => {
       ),
     /Developer returned invalid JSON/
   );
+});
+
+test("runTester includes manual and integration quality gates", async () => {
+  let capturedUserMessage = "";
+  const issue = { key: "MP-8", title: "Checkout flow", body: "Add analytics events" };
+
+  const result = await runTester(issue, "diff", {
+    llmCall: async (_system, userMessage) => {
+      capturedUserMessage = userMessage;
+      return JSON.stringify({
+        testPlan: "plan",
+        snapshotTests: "snap",
+        manualValidation: {
+          worksAsExpected: true,
+          stepsRun: ["Open app", "Trigger checkout"],
+          observations: ["Behavior matches expected"],
+        },
+        integrationTests: {
+          status: "PASS",
+          details: "Checkout integration suite green",
+        },
+        unitTests: "unit",
+        uiTests: "ui",
+        bugsFound: [],
+        coverageAssessment: "ok",
+        verdict: "PASS",
+        verdictReason: "all good",
+      });
+    },
+  });
+
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.manualValidation.worksAsExpected, true);
+  assert.equal(result.integrationTests.status, "PASS");
+  assert.match(capturedUserMessage, /Required output quality gate/);
+  assert.match(capturedUserMessage, /manual behavior does not work as expected/);
+  assert.match(capturedUserMessage, /critical integration tests fail/);
 });

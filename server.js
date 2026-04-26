@@ -9,6 +9,7 @@ import { runPRReviewer } from "./agents/prReviewer.js";
 import * as jira from "./jira/client.js";
 import { createDraftPullRequest } from "./github/cloudClient.js";
 import { getProjectContextForPromptCached } from "./project/context.js";
+import { ensureSnapshotsAndRunTests } from "./project/testRunner.js";
 
 const app = express();
 app.use(express.json());
@@ -77,12 +78,34 @@ function developerComment(result) {
 
 function testerComment(result) {
   const bugs = result.bugsFound?.length ? result.bugsFound.map((b) => `- ${b}`).join("\n") : "- none";
+  const manual = result.manualValidation || {};
+  const manualSteps = Array.isArray(manual.stepsRun) && manual.stepsRun.length
+    ? manual.stepsRun.map((s) => `- ${s}`).join("\n")
+    : "- none provided";
+  const manualObs = Array.isArray(manual.observations) && manual.observations.length
+    ? manual.observations.map((o) => `- ${o}`).join("\n")
+    : "- none";
+  const integration = result.integrationTests || {};
   return [
     `Tester verdict: ${result.verdict}`,
     result.verdictReason || "",
     "",
     "Test plan:",
     result.testPlan || "No test plan generated.",
+    "",
+    "Snapshot tests:",
+    result.snapshotTests || "No snapshot tests generated.",
+    "",
+    "Manual validation:",
+    `- worksAsExpected: ${manual.worksAsExpected === true ? "yes" : manual.worksAsExpected === false ? "no" : "unknown"}`,
+    "- stepsRun:",
+    manualSteps,
+    "- observations:",
+    manualObs,
+    "",
+    "Integration tests:",
+    `- status: ${integration.status || "unknown"}`,
+    `- details: ${integration.details || "not provided"}`,
     "",
     "Unit tests:",
     result.unitTests || "No unit tests generated.",
@@ -92,6 +115,29 @@ function testerComment(result) {
     "",
     "Bugs found:",
     bugs,
+  ].join("\n");
+}
+
+function shouldFailFromTesterAssessment(result) {
+  if (result.verdict === "FAIL") return true;
+  if (result.manualValidation?.worksAsExpected === false) return true;
+  if (result.integrationTests?.status === "FAIL") return true;
+  return false;
+}
+
+function testerExecutionComment(execution) {
+  const created = execution.snapshot?.created ? "yes" : "no";
+  const snapshotPath = execution.snapshot?.path || "not created";
+  return [
+    "Tester execution:",
+    `- simulator: ${execution.destination}`,
+    `- snapshotCreated: ${created}`,
+    `- snapshotPath: ${snapshotPath}`,
+    `- testsSuccess: ${execution.testRun?.success ? "yes" : "no"}`,
+    `- testExitCode: ${execution.testRun?.exitCode}`,
+    "",
+    "xcodebuild tail:",
+    execution.testRun?.outputTail || "no output",
   ].join("\n");
 }
 
@@ -216,8 +262,18 @@ app.post("/jira/webhook", async (req, res) => {
       const testerResult = await runTester(normalized, "Diff supplied by local branch/PR process.");
       await jira.addComment(issue.key, testerComment(testerResult));
 
-      if (testerResult.verdict === "FAIL") {
-        await jira.addComment(issue.key, "Testing failed. Move ticket back to developer.");
+      const execution = await ensureSnapshotsAndRunTests(issue.key);
+      await jira.addComment(issue.key, testerExecutionComment(execution));
+      if (!execution.testRun?.success) {
+        await jira.addComment(issue.key, "Automated tests failed. Move ticket back to developer.");
+        return;
+      }
+
+      if (shouldFailFromTesterAssessment(testerResult)) {
+        await jira.addComment(
+          issue.key,
+          "Testing failed (manual validation and/or integration checks). Move ticket back to developer."
+        );
         return;
       }
 
