@@ -1,6 +1,6 @@
 # iOS Agent Pipeline (Jira + GitHub)
 
-Status-driven multi-agent flow for `Marktplaats_app_iOS`:
+Status-driven multi-agent flow for an iOS repository:
 
 Architect -> Developer -> Tester -> PR Reviewer
 
@@ -41,10 +41,11 @@ JIRA_STATUS_DONE=DONE
 JIRA_BRANCH_FIELD_ID=customfield_12345
 JIRA_BOARD_ID=
 JIRA_BOARD_NAME=SMB General Classifieds
+TARGET_PROJECT_PATH=/absolute/path/to/project
 
 GITHUB_TOKEN=...
 GITHUB_OWNER=your-org
-GITHUB_REPO=Marktplaats_app_iOS
+GITHUB_REPO=
 GITHUB_BASE_BRANCH=main
 ```
 
@@ -79,3 +80,10 @@ Board scoping (optional):
 - Set either `JIRA_BOARD_ID` or `JIRA_BOARD_NAME`.
 - If configured, pipeline runs only for issues that belong to that board.
 - `JIRA_BOARD_ID` takes precedence over `JIRA_BOARD_NAME`.
+
+Project context requirements:
+
+- `TARGET_PROJECT_PATH` should point to the iOS repository root.
+- `README.md` and `CLAUDE.md` are mandatory in that repo.
+- `skills` content is optional and used as extra context if present.
+- Architect/Developer stages are blocked when mandatory docs are missing.
