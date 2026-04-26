@@ -85,7 +85,7 @@ Configure Jira webhook to call `http://localhost:3000/jira/webhook` for:
 When status changes:
 
 - To `IN PROGRESS`: Developer agent posts execution contract.
-- To `IN REVIEW`: Tester agent posts QA report, manual validation findings, integration-test assessment, ensures snapshot tests exist, runs `xcodebuild test` on configured simulator, then draft PR is created in GitHub, reviewer verdict is added back to Jira, and issue transitions to `DONE` only if checks pass.
+- To `IN REVIEW`: Tester agent posts QA report, manual validation findings, integration-test assessment, ensures snapshot tests exist, runs `xcodebuild test` on configured simulator, then draft PR is created in GitHub, PR reviewer runs merge gate, and issue transitions to `DONE` only if tester and reviewer checks pass.
 
 Board scoping (optional):
 

@@ -142,6 +142,12 @@ function testerExecutionComment(execution) {
 }
 
 function reviewerComment(result, prUrl) {
+  const decision = result.reviewerDecision || {};
+  const checks = decision.requiredChecks || {};
+  const blocking = Array.isArray(decision.blockingIssues) && decision.blockingIssues.length
+    ? decision.blockingIssues.map((item) => `- ${item}`).join("\n")
+    : "- none";
+
   return [
     `PR review verdict: ${result.verdict}`,
     `Code quality: ${result.codeQuality}`,
@@ -150,8 +156,23 @@ function reviewerComment(result, prUrl) {
     "",
     result.feedback ? `Required changes:\n${result.feedback}` : "No required changes.",
     "",
+    "Reviewer decision:",
+    `- mergeReady: ${decision.mergeReady === true ? "yes" : decision.mergeReady === false ? "no" : "unknown"}`,
+    "- blockingIssues:",
+    blocking,
+    `- requiredChecks.manualValidationVerified: ${checks.manualValidationVerified === true ? "yes" : checks.manualValidationVerified === false ? "no" : "unknown"}`,
+    `- requiredChecks.integrationTestsVerified: ${checks.integrationTestsVerified === true ? "yes" : checks.integrationTestsVerified === false ? "no" : "unknown"}`,
+    "",
     `PR: ${prUrl}`,
   ].join("\n");
+}
+
+function shouldFailFromReviewerAssessment(result) {
+  if (result.verdict === "REQUEST_CHANGES") return true;
+  if (result.reviewerDecision?.mergeReady === false) return true;
+  if (result.reviewerDecision?.requiredChecks?.manualValidationVerified === false) return true;
+  if (result.reviewerDecision?.requiredChecks?.integrationTestsVerified === false) return true;
+  return false;
 }
 
 function getPlainDescription(issue) {
@@ -291,6 +312,11 @@ app.post("/jira/webhook", async (req, res) => {
         [{ body: testerComment(testerResult) }]
       );
       await jira.addComment(issue.key, reviewerComment(reviewResult, pr.html_url));
+
+      if (shouldFailFromReviewerAssessment(reviewResult)) {
+        await jira.addComment(issue.key, "PR Reviewer requested changes. Move ticket back to developer.");
+        return;
+      }
 
       await jira.transitionIssueByName(issue.key, DONE_STATUS).catch(() => {});
       return;

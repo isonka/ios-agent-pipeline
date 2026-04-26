@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { runArchitect } from "../agents/architect.js";
 import { runDeveloper } from "../agents/developer.js";
 import { runTester } from "../agents/tester.js";
+import { runPRReviewer } from "../agents/prReviewer.js";
 
 test("runArchitect uses provided project context and parses JSON", async () => {
   let capturedUserMessage = "";
@@ -142,4 +143,42 @@ test("runTester includes manual and integration quality gates", async () => {
   assert.match(capturedUserMessage, /Required output quality gate/);
   assert.match(capturedUserMessage, /manual behavior does not work as expected/);
   assert.match(capturedUserMessage, /critical integration tests fail/);
+});
+
+test("runPRReviewer includes merge quality gate and reviewerDecision", async () => {
+  let capturedUserMessage = "";
+
+  const result = await runPRReviewer(
+    { number: 10, title: "Feature PR", body: "PR body" },
+    "diff",
+    [{ body: "🧪 Tester Agent\nall checks green" }],
+    {
+      llmCall: async (_system, userMessage) => {
+        capturedUserMessage = userMessage;
+        return JSON.stringify({
+          verdict: "APPROVE",
+          summary: "Looks good",
+          feedback: "",
+          codeQuality: "GOOD",
+          securityConcerns: [],
+          performanceConcerns: [],
+          suggestions: [],
+          reviewerDecision: {
+            mergeReady: true,
+            blockingIssues: [],
+            requiredChecks: {
+              manualValidationVerified: true,
+              integrationTestsVerified: true,
+            },
+          },
+        });
+      },
+    }
+  );
+
+  assert.equal(result.verdict, "APPROVE");
+  assert.equal(result.reviewerDecision.mergeReady, true);
+  assert.equal(result.reviewerDecision.requiredChecks.integrationTestsVerified, true);
+  assert.match(capturedUserMessage, /Quality gate/);
+  assert.match(capturedUserMessage, /merge is not safe/);
 });
