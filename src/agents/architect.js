@@ -16,6 +16,24 @@ function buildArchitectPrompt(issue, context) {
   ].join("\n");
 }
 
+function extractJsonCandidate(text) {
+  if (!text) return "";
+  const trimmed = text.trim();
+
+  if (trimmed.startsWith("```")) {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) return fenced[1].trim();
+  }
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+
+  return trimmed;
+}
+
 export async function runArchitect({ llm, issue, context }) {
   const text = await llm.generateText({
     systemPrompt: "You are an iOS Architect agent. Output only valid JSON.",
@@ -23,7 +41,15 @@ export async function runArchitect({ llm, issue, context }) {
     temperature: 0.1,
   });
 
-  const parsed = JSON.parse(text);
+  let parsed;
+  const jsonCandidate = extractJsonCandidate(text);
+  try {
+    parsed = JSON.parse(jsonCandidate);
+  } catch {
+    const preview = String(text || "").slice(0, 300).replace(/\s+/g, " ");
+    throw new Error(`Architect returned non-JSON content. Preview: ${preview}`);
+  }
+
   if (!Array.isArray(parsed.subtasks)) {
     throw new Error("Architect output missing subtasks array.");
   }
