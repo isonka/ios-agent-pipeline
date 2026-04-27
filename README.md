@@ -1,16 +1,12 @@
-# iOS Agent Pipeline (Jira + GitHub)
+# iOS Agent Pipeline
 
-Status-driven multi-agent flow for an iOS repository:
+New implementation entrypoint: `src/server.js`.
 
-Architect -> Developer -> Tester -> PR Reviewer
+This tool orchestrates manual role handoff using Jira + AWS Bedrock Claude:
 
-The system uses Jira workflow transitions as hard gates:
+Architect -> Developer -> Tester -> Code Reviewer
 
-- Developer starts by moving issue to `IN PROGRESS`.
-- Developer finishes by moving issue to `IN REVIEW`.
-- Tester runs from `IN REVIEW`, posts strict QA verdict, then opens draft PR.
-- PR Reviewer posts final review verdict.
-- Pipeline moves the issue to `DONE` when testing/review stage completes.
+The pipeline runs against any external repository path (`targetRepoPath`) provided per request.
 
 ## Setup
 
@@ -20,148 +16,96 @@ The system uses Jira workflow transitions as hard gates:
 npm install
 ```
 
-2. Add env vars to `.env`:
+2. Copy and fill environment values:
 
 ```bash
-PORT=3000
-WEBHOOK_SECRET=replace_with_shared_secret
-ON_DEMAND_ONLY=false
-
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_USE_STATIC_CREDENTIALS=false
-BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-5
-LLM_PROVIDER=bedrock
-LLM_MAX_TOKENS=4096
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-mini
-ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=claude-3-5-sonnet-latest
-
-JIRA_BASE_URL=https://your-domain.atlassian.net
-JIRA_EMAIL=you@company.com
-JIRA_API_TOKEN=...
-JIRA_PROJECT_KEY=IOS
-JIRA_STATUS_IN_PROGRESS=IN PROGRESS
-JIRA_STATUS_IN_REVIEW=IN REVIEW
-JIRA_STATUS_DONE=DONE
-JIRA_BRANCH_FIELD_ID=customfield_12345
-JIRA_BOARD_ID=
-JIRA_BOARD_NAME=SMB General Classifieds
-TARGET_PROJECT_PATH=/absolute/path/to/project
-IOS_TEST_SCHEME=YourAppScheme
-IOS_WORKSPACE=YourApp.xcworkspace
-IOS_PROJECT=
-IOS_SIMULATOR_NAME=Marktplaats iPhone 14 Pro
-IOS_SIMULATOR_OS=18.2
-IOS_SNAPSHOT_TEST_FILE=Tests/GeneratedSnapshotTests.swift
-
-GITHUB_TOKEN=...
-GITHUB_OWNER=your-org
-GITHUB_REPO=
-GITHUB_BASE_BRANCH=main
+cp .env.example .env
 ```
 
-3. Start server:
+Notes:
+- `.env.example` defines required keys.
+- Startup fails fast if required keys are missing.
+- `LLM_PROVIDER` must be `bedrock`.
+
+3. Start:
 
 ```bash
 npm start
 ```
 
-### AWS SSO (Bedrock)
+## API
 
-If you use AWS SSO instead of static AWS keys:
+### `GET /health`
 
-```bash
-aws sso login --profile your-profile
-export AWS_PROFILE=your-profile
+Simple health endpoint.
+
+### `POST /pipeline/create-subtasks`
+
+Body:
+
+```json
+{
+  "issueKey": "IOS-123",
+  "targetRepoPath": "/absolute/path/to/ios/repo"
+}
 ```
 
-Then start the server in the same shell.
+Behavior:
+- Loads Jira issue.
+- Reads markdown docs from target repo.
+- Architect agent generates subtask contracts.
+- Creates Jira subtasks.
+- Saves run artifacts in `.data/pipeline-runs/<issue>.json`.
 
-Notes:
+### `POST /pipeline/run-developer`
 
-- By default, the app prefers AWS SDK default credentials chain (SSO/profile/role).
-- Static keys are used only when `AWS_USE_STATIC_CREDENTIALS=true`.
+Body:
 
-## Endpoints
+```json
+{
+  "issueKey": "IOS-123",
+  "subtaskKey": "IOS-124",
+  "targetRepoPath": "/absolute/path/to/ios/repo"
+}
+```
 
-- `POST /pipeline/create-subtasks` with `{ "issueKey": "IOS-123", "plannedChanges": "...", "expectations": "..." }`
-  - Runs Architect agent and creates Jira subtasks with explicit task contracts.
-  - `plannedChanges` is required and is added to Architect memory before generation.
-- `POST /pipeline/run-developer` with `{ "issueKey": "IOS-123" }`
-  - Runs only Developer stage on demand and posts result to Jira.
-  - `plannedChanges` is required and stored in Developer memory.
-- `POST /pipeline/run-tester` with `{ "issueKey": "IOS-123", "plannedChanges": "...", "diff": "..." }`
-  - Runs Tester stage on demand and records tester learning memory.
-- `POST /pipeline/run-reviewer` with `{ "issueKey": "IOS-123", "plannedChanges": "...", ... }`
-  - Runs PR Reviewer stage on demand and records reviewer learning memory.
-- `POST /pipeline/agent-feedback`
-  - Stores rejection/acceptance feedback for any agent (`architect|developer|tester|reviewer`).
-- `POST /pipeline/architect-feedback` (optional)
-  - Stores extra feedback for Architect memory outside the main architect run.
-- `POST /jira/webhook`
-  - Trigger from Jira issue webhooks for transition automation.
-- `GET /health`
+Behavior:
+- Developer agent works on one selected subtask.
+- Returns `patchProposal` (diff text) for manual apply/review.
+- Saves output in run artifact state.
 
-## Jira webhook events
+### `POST /pipeline/run-tester`
 
-Configure Jira webhook to call `http://localhost:3000/jira/webhook` for:
+Body:
 
-- Issue updated (status transitions)
-- Issue created (optional)
+```json
+{
+  "issueKey": "IOS-123",
+  "diff": "unified diff text",
+  "targetRepoPath": "/absolute/path/to/ios/repo"
+}
+```
 
-When status changes:
+Behavior:
+- Tester reviews the diff against context and returns `PASS` or `FAIL`.
 
-- To `IN PROGRESS`: Developer agent posts execution contract.
-- To `IN REVIEW`: Tester agent posts QA report, manual validation findings, integration-test assessment, ensures snapshot tests exist, runs `xcodebuild test` on configured simulator, then draft PR is created in GitHub, PR reviewer runs merge gate, and issue transitions to `DONE` only if tester and reviewer checks pass.
+### `POST /pipeline/run-reviewer`
 
-Board scoping (optional):
+Body:
 
-- Set either `JIRA_BOARD_ID` or `JIRA_BOARD_NAME`.
-- If configured, pipeline runs only for issues that belong to that board.
-- `JIRA_BOARD_ID` takes precedence over `JIRA_BOARD_NAME`.
+```json
+{
+  "issueKey": "IOS-123",
+  "diff": "unified diff text",
+  "targetRepoPath": "/absolute/path/to/ios/repo"
+}
+```
 
-On-demand mode:
+Behavior:
+- Reviewer consumes diff and tester report and returns merge recommendation.
 
-- Set `ON_DEMAND_ONLY=true` to ignore Jira webhook automation.
-- Use manual endpoints (`/pipeline/create-subtasks`, `/pipeline/run-developer`) as needed.
+## Runtime constraints
 
-Architect learning loop:
-
-- Primary loop: pass `plannedChanges` (required) when calling `/pipeline/create-subtasks`.
-- Optional loop: submit extra feedback later via `/pipeline/architect-feedback`.
-- Same pattern applies to Developer/Tester/Reviewer on their on-demand endpoints.
-- If an output is rejected, call `/pipeline/agent-feedback` immediately so next run uses explicit failure feedback.
-- Memory is persisted and injected into future prompts automatically.
-- Optional env:
-  - `AGENT_MEMORY_DIR` (default `.data/agent-memory`)
-  - `AGENT_MEMORY_MAX_ENTRIES` (default `50`)
-- Memory files are created locally in this repo on startup:
-  - `.data/agent-memory/architect.json`
-  - `.data/agent-memory/developer.json`
-  - `.data/agent-memory/tester.json`
-  - `.data/agent-memory/reviewer.json`
-
-Project context requirements:
-
-- `TARGET_PROJECT_PATH` should point to the iOS repository root.
-- `README.md` and `CLAUDE.md` are mandatory in that repo.
-- `skills` content is optional and used as extra context if present.
-- Architect/Developer stages are blocked when mandatory docs are missing.
-- Project context is cached on disk and reused across runs to reduce repeated prompt cost.
-- Optional: `PROJECT_CONTEXT_CACHE_FILE` (default `.data/project-context-cache.json`)
-
-Tester execution requirements:
-
-- `IOS_TEST_SCHEME` is required for running tests.
-- Set `IOS_WORKSPACE` or `IOS_PROJECT` (auto-detection is attempted if both empty).
-- Snapshot baseline simulator defaults to `Marktplaats iPhone 14 Pro` on iOS `18.2`.
-- Tester marks ticket as failed if manual behavior is not as expected or integration-test status is `FAIL`.
-
-LLM provider selection:
-
-- Set `LLM_PROVIDER` to `bedrock`, `openai`, or `anthropic`.
-- Default is `bedrock`.
-- Bedrock remains the first/default provider and uses AWS credentials.
+- Only AWS Bedrock Claude is supported (`LLM_PROVIDER=bedrock`).
+- `targetRepoPath` must point to a readable git repo root.
+- `TARGET_PROJECT_PATH` is optional fallback when `targetRepoPath` is omitted.

@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import crypto from "crypto";
+import fs from "fs/promises";
+import path from "path";
 
 import { runArchitect } from "./agents/architect.js";
 import { runDeveloper } from "./agents/developer.js";
@@ -22,6 +24,70 @@ const IN_REVIEW_STATUS = process.env.JIRA_STATUS_IN_REVIEW || "IN REVIEW";
 const DONE_STATUS = process.env.JIRA_STATUS_DONE || "DONE";
 const BRANCH_FIELD = process.env.JIRA_BRANCH_FIELD_ID || "";
 const ON_DEMAND_ONLY = String(process.env.ON_DEMAND_ONLY || "false").toLowerCase() === "true";
+const DEFAULT_TARGET_PROJECT_PATH = process.env.TARGET_PROJECT_PATH || "";
+const REQUIRED_LLM_PROVIDER = "bedrock";
+
+function ensureBedrockOnlyProvider() {
+  const configuredProvider = String(process.env.LLM_PROVIDER || REQUIRED_LLM_PROVIDER).toLowerCase();
+  if (configuredProvider !== REQUIRED_LLM_PROVIDER) {
+    throw new Error(`Unsupported LLM_PROVIDER '${configuredProvider}'. Only '${REQUIRED_LLM_PROVIDER}' is allowed.`);
+  }
+}
+
+async function listRequiredEnvKeysFromExample() {
+  const envExamplePath = path.resolve(process.cwd(), ".env.example");
+  const raw = await fs.readFile(envExamplePath, "utf8");
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => {
+      const separatorIndex = line.indexOf("=");
+      if (separatorIndex < 0) return null;
+      const key = line.slice(0, separatorIndex).trim();
+      const exampleValue = line.slice(separatorIndex + 1).trim();
+      if (!key || exampleValue === "") return null;
+      return key;
+    })
+    .filter(Boolean);
+}
+
+async function validateRuntimeEnv() {
+  ensureBedrockOnlyProvider();
+
+  const requiredKeys = await listRequiredEnvKeysFromExample();
+  const missing = requiredKeys.filter((key) => !process.env[key] || String(process.env[key]).trim() === "");
+  if (missing.length) {
+    throw new Error(
+      `Missing required env vars declared in .env.example: ${missing.join(", ")}`
+    );
+  }
+}
+
+async function resolveTargetRepoPath(inputPath) {
+  const selectedPath = inputPath || DEFAULT_TARGET_PROJECT_PATH;
+  if (!selectedPath) {
+    throw new Error("targetRepoPath is required when TARGET_PROJECT_PATH is not configured.");
+  }
+
+  const absolutePath = path.resolve(selectedPath);
+  const stat = await fs.stat(absolutePath).catch(() => null);
+  if (!stat || !stat.isDirectory()) {
+    throw new Error(`Invalid targetRepoPath: '${absolutePath}' is not a readable directory.`);
+  }
+
+  const gitDir = path.join(absolutePath, ".git");
+  const gitDirStat = await fs.stat(gitDir).catch(() => null);
+  if (!gitDirStat || !gitDirStat.isDirectory()) {
+    throw new Error(`Invalid targetRepoPath: '${absolutePath}' is not a git repository root.`);
+  }
+
+  return absolutePath;
+}
+
+function withTargetProjectPath(targetRepoPath) {
+  process.env.TARGET_PROJECT_PATH = targetRepoPath;
+}
 
 // ── Webhook signature verification ────────────────────────────────────────
 
@@ -93,6 +159,10 @@ function developerComment(result) {
     skillFiles,
     `- reason: ${decision.reason || "not provided"}`,
   ].join("\n");
+}
+
+function extractDeveloperPatch(result) {
+  return result?.patchProposal || result?.diff || result?.patch || "";
 }
 
 function testerComment(result) {
@@ -238,7 +308,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
   }
 
   try {
-    const { issueKey, plannedChanges, expectations = "" } = req.body || {};
+    const { issueKey, plannedChanges, expectations = "", targetRepoPath } = req.body || {};
     if (!issueKey) {
       return res.status(400).json({ error: "issueKey is required" });
     }
@@ -248,6 +318,8 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       });
     }
 
+    const resolvedRepoPath = await resolveTargetRepoPath(targetRepoPath);
+    withTargetProjectPath(resolvedRepoPath);
     const issue = await loadAuthorizedIssue(issueKey);
     const plannedChangesText = typeof plannedChanges === "string"
       ? plannedChanges
@@ -287,7 +359,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
 
     await jira.addComment(issueKey, architectComment(issueKey, breakdown, subtaskKeys));
     await jira.addComment(issueKey, architectFeedbackRequestComment(issueKey, subtaskKeys));
-    return res.status(200).json({ created: subtaskKeys.length, subtaskKeys });
+    return res.status(200).json({ created: subtaskKeys.length, subtaskKeys, targetRepoPath: resolvedRepoPath });
   } catch (err) {
     if (String(err.message || "").startsWith("Forbidden:")) {
       return res.status(403).json({ error: err.message });
@@ -303,9 +375,12 @@ app.post("/pipeline/run-developer", async (req, res) => {
   }
 
   try {
-    const { issueKey, plannedChanges, expectations = "" } = req.body || {};
+    const { issueKey, plannedChanges, expectations = "", targetRepoPath, subtaskKey } = req.body || {};
     if (!issueKey) {
       return res.status(400).json({ error: "issueKey is required" });
+    }
+    if (!subtaskKey) {
+      return res.status(400).json({ error: "subtaskKey is required for developer stage." });
     }
     if (!plannedChanges) {
       return res.status(400).json({
@@ -313,6 +388,8 @@ app.post("/pipeline/run-developer", async (req, res) => {
       });
     }
 
+    const resolvedRepoPath = await resolveTargetRepoPath(targetRepoPath);
+    withTargetProjectPath(resolvedRepoPath);
     await getProjectContextForPromptCached();
     const issue = await loadAuthorizedIssue(issueKey);
     const plannedChangesText = typeof plannedChanges === "string"
@@ -322,17 +399,27 @@ app.post("/pipeline/run-developer", async (req, res) => {
       issueKey,
       rating: "plan_input",
       expectations,
-      notes: plannedChangesText,
+      notes: `subtaskKey=${subtaskKey}\n${plannedChangesText}`,
       source: "planned_input",
     });
     const normalized = normalizeIssue(issue);
     const devResult = await runDeveloper(normalized);
-    await jira.addComment(issue.key, developerComment(devResult));
+    const patchProposal = extractDeveloperPatch(devResult);
+    const patchSummary = patchProposal
+      ? `\n\nPatch proposal:\n\`\`\`diff\n${patchProposal.slice(0, 4000)}\n\`\`\``
+      : "\n\nPatch proposal: not provided by developer agent.";
+    await jira.addComment(
+      issue.key,
+      `${developerComment(devResult)}\n\nSelected subtask: ${subtaskKey}\nTarget repo: ${resolvedRepoPath}${patchSummary}`
+    );
 
     return res.status(200).json({
       issueKey,
+      subtaskKey,
+      targetRepoPath: resolvedRepoPath,
       prTitle: devResult.prTitle,
       branchName: devResult.branchName,
+      patchProposal,
       developerDecision: devResult.developerDecision || null,
     });
   } catch (err) {
@@ -349,7 +436,7 @@ app.post("/pipeline/run-tester", async (req, res) => {
   }
 
   try {
-    const { issueKey, plannedChanges, expectations = "", diff = "Diff supplied manually." } = req.body || {};
+    const { issueKey, plannedChanges, expectations = "", diff = "Diff supplied manually.", targetRepoPath } = req.body || {};
     if (!issueKey) return res.status(400).json({ error: "issueKey is required" });
     if (!plannedChanges) {
       return res.status(400).json({
@@ -357,6 +444,8 @@ app.post("/pipeline/run-tester", async (req, res) => {
       });
     }
 
+    const resolvedRepoPath = await resolveTargetRepoPath(targetRepoPath);
+    withTargetProjectPath(resolvedRepoPath);
     const issue = await loadAuthorizedIssue(issueKey);
     const plannedChangesText = typeof plannedChanges === "string"
       ? plannedChanges
@@ -371,12 +460,13 @@ app.post("/pipeline/run-tester", async (req, res) => {
 
     const normalized = normalizeIssue(issue);
     const testerResult = await runTester(normalized, diff);
-    await jira.addComment(issue.key, testerComment(testerResult));
+    await jira.addComment(issue.key, `${testerComment(testerResult)}\n\nTarget repo: ${resolvedRepoPath}`);
     const execution = await ensureSnapshotsAndRunTests(issue.key);
     await jira.addComment(issue.key, testerExecutionComment(execution));
 
     return res.status(200).json({
       issueKey,
+      targetRepoPath: resolvedRepoPath,
       verdict: testerResult.verdict,
       executionSuccess: Boolean(execution.testRun?.success),
     });
@@ -403,6 +493,7 @@ app.post("/pipeline/run-reviewer", async (req, res) => {
       prBody = "",
       diff = "Diff supplied manually.",
       qaSummary = "",
+      targetRepoPath,
     } = req.body || {};
     if (!issueKey) return res.status(400).json({ error: "issueKey is required" });
     if (!plannedChanges) {
@@ -411,6 +502,8 @@ app.post("/pipeline/run-reviewer", async (req, res) => {
       });
     }
 
+    const resolvedRepoPath = await resolveTargetRepoPath(targetRepoPath);
+    withTargetProjectPath(resolvedRepoPath);
     const issue = await loadAuthorizedIssue(issueKey);
     const plannedChangesText = typeof plannedChanges === "string"
       ? plannedChanges
@@ -428,9 +521,13 @@ app.post("/pipeline/run-reviewer", async (req, res) => {
       diff,
       [{ body: qaSummary || "No QA summary provided." }]
     );
-    await jira.addComment(issue.key, reviewerComment(reviewResult, "manual/on-demand"));
+    await jira.addComment(
+      issue.key,
+      `${reviewerComment(reviewResult, "manual/on-demand")}\n\nTarget repo: ${resolvedRepoPath}`
+    );
     return res.status(200).json({
       issueKey,
+      targetRepoPath: resolvedRepoPath,
       verdict: reviewResult.verdict,
       mergeReady: reviewResult.reviewerDecision?.mergeReady ?? null,
     });
@@ -652,11 +749,16 @@ app.get("/health", (_, res) => res.json({ status: "ok", timestamp: new Date().to
 // ── Start ──────────────────────────────────────────────────────────────────
 
 app.listen(PORT, async () => {
-  await initializeAgentMemoryFiles().catch((err) => {
-    console.error(`Failed to initialize local agent memory files: ${err.message}`);
-  });
-  console.log(`\n🚀 iOS Agent Pipeline running on :${PORT}`);
-  console.log(`   Bedrock model: ${process.env.BEDROCK_MODEL_ID || "anthropic.claude-sonnet-4-5"}`);
-  console.log(`   Jira: ${process.env.JIRA_BASE_URL || "not configured"}`);
-  console.log(`   Health: http://localhost:${PORT}/health\n`);
+  try {
+    await validateRuntimeEnv();
+    await initializeAgentMemoryFiles();
+    console.log(`\n🚀 iOS Agent Pipeline running on :${PORT}`);
+    console.log(`   LLM provider: ${process.env.LLM_PROVIDER}`);
+    console.log(`   Bedrock model: ${process.env.BEDROCK_MODEL_ID || "anthropic.claude-sonnet-4-5"}`);
+    console.log(`   Jira: ${process.env.JIRA_BASE_URL || "not configured"}`);
+    console.log(`   Health: http://localhost:${PORT}/health\n`);
+  } catch (err) {
+    console.error(`Startup validation failed: ${err.message}`);
+    process.exit(1);
+  }
 });
