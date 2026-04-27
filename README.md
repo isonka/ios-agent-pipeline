@@ -30,6 +30,7 @@ ON_DEMAND_ONLY=false
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
+AWS_USE_STATIC_CREDENTIALS=false
 BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-5
 LLM_PROVIDER=bedrock
 LLM_MAX_TOKENS=4096
@@ -78,6 +79,11 @@ export AWS_PROFILE=your-profile
 ```
 
 Then start the server in the same shell.
+
+Notes:
+
+- By default, the app prefers AWS SDK default credentials chain (SSO/profile/role).
+- Static keys are used only when `AWS_USE_STATIC_CREDENTIALS=true`.
 
 ## Endpoints
 

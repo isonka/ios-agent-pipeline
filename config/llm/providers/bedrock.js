@@ -5,11 +5,15 @@ let bedrockClient = null;
 
 function getBedrockClient() {
   if (bedrockClient) return bedrockClient;
+  const useStaticCreds = String(process.env.AWS_USE_STATIC_CREDENTIALS || "false").toLowerCase() === "true";
+  const hasStaticCreds = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+  const shouldUseStaticCreds = useStaticCreds && hasStaticCreds;
+
   bedrockClient = new BedrockRuntimeClient({
     region: process.env.AWS_REGION || "us-east-1",
-    // If AWS CLI is configured locally, credentials are picked up automatically.
-    // Otherwise explicit keys from env are used.
-    ...(process.env.AWS_ACCESS_KEY_ID && {
+    // Prefer default AWS SDK credential chain (SSO/profile/role).
+    // Static keys are used only when explicitly enabled.
+    ...(shouldUseStaticCreds && {
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
