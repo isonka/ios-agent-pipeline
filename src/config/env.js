@@ -3,6 +3,9 @@ import fs from "fs/promises";
 import path from "path";
 
 const REQUIRED_PROVIDER = "bedrock";
+const OPTIONAL_LEGACY_KEYS = new Set([
+  "WEBHOOK_SECRET",
+]);
 
 function isBlank(value) {
   return value === undefined || value === null || String(value).trim() === "";
@@ -33,7 +36,10 @@ export async function validateEnv() {
   }
 
   const requiredKeys = await getRequiredKeysFromEnvExample();
-  const missingKeys = requiredKeys.filter((key) => isBlank(process.env[key]));
+  const missingKeys = requiredKeys.filter((key) => {
+    if (OPTIONAL_LEGACY_KEYS.has(key)) return false;
+    return isBlank(process.env[key]);
+  });
   if (missingKeys.length > 0) {
     throw new Error(`Missing required env vars from .env.example: ${missingKeys.join(", ")}`);
   }
