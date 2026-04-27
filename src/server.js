@@ -39,8 +39,8 @@ app.get("/health", (_, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-async function loadIssueAndContext({ jira, issueKey, targetRepoPath, targetFallback }) {
-  const resolvedRepoPath = await resolveTargetRepoPath(targetRepoPath, targetFallback);
+async function loadIssueAndContext({ jira, issueKey, targetFallback }) {
+  const resolvedRepoPath = await resolveTargetRepoPath("", targetFallback);
   const [issue, context] = await Promise.all([
     jira.getIssue(issueKey),
     buildProjectContext(resolvedRepoPath),
@@ -50,7 +50,7 @@ async function loadIssueAndContext({ jira, issueKey, targetRepoPath, targetFallb
 
 app.post("/pipeline/create-subtasks", async (req, res) => {
   try {
-    const { issueKey, targetRepoPath } = req.body || {};
+    const { issueKey } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
 
     const config = envConfig();
@@ -58,7 +58,6 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
     const { issue, context, resolvedRepoPath } = await loadIssueAndContext({
       jira: deps.jira,
       issueKey,
-      targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
     });
 
@@ -100,7 +99,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
 
 app.post("/pipeline/run-developer", async (req, res) => {
   try {
-    const { issueKey, subtaskKey, targetRepoPath } = req.body || {};
+    const { issueKey, subtaskKey } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
     if (!subtaskKey) return jsonError(res, 400, "subtaskKey is required");
 
@@ -109,7 +108,6 @@ app.post("/pipeline/run-developer", async (req, res) => {
     const { issue, context, resolvedRepoPath } = await loadIssueAndContext({
       jira: deps.jira,
       issueKey,
-      targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
     });
 
@@ -154,7 +152,7 @@ app.post("/pipeline/run-developer", async (req, res) => {
 
 app.post("/pipeline/run-tester", async (req, res) => {
   try {
-    const { issueKey, diff, targetRepoPath } = req.body || {};
+    const { issueKey, diff } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
     if (!diff) return jsonError(res, 400, "diff is required");
 
@@ -163,7 +161,6 @@ app.post("/pipeline/run-tester", async (req, res) => {
     const { context, resolvedRepoPath } = await loadIssueAndContext({
       jira: deps.jira,
       issueKey,
-      targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
     });
 
@@ -200,13 +197,13 @@ app.post("/pipeline/run-tester", async (req, res) => {
 
 app.post("/pipeline/run-reviewer", async (req, res) => {
   try {
-    const { issueKey, diff, targetRepoPath } = req.body || {};
+    const { issueKey, diff } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
     if (!diff) return jsonError(res, 400, "diff is required");
 
     const config = envConfig();
     const deps = createDependencies(config);
-    const resolvedRepoPath = await resolveTargetRepoPath(targetRepoPath, config.targetProjectPathFallback);
+    const resolvedRepoPath = await resolveTargetRepoPath("", config.targetProjectPathFallback);
     const runState = await loadRunState(config.runStateDir, issueKey);
     const testerReport = runState?.tester || {};
 

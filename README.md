@@ -6,7 +6,7 @@ This tool orchestrates manual role handoff using Jira + AWS Bedrock Claude:
 
 Architect -> Developer -> Tester -> Code Reviewer
 
-The pipeline runs against any external repository path (`targetRepoPath`) provided per request.
+The pipeline runs against the repository configured in `.env` via `TARGET_PROJECT_PATH`.
 
 ## Setup
 
@@ -45,8 +45,7 @@ Body:
 
 ```json
 {
-  "issueKey": "IOS-123",
-  "targetRepoPath": "/absolute/path/to/ios/repo"
+  "issueKey": "IOS-123"
 }
 ```
 
@@ -64,8 +63,7 @@ Body:
 ```json
 {
   "issueKey": "IOS-123",
-  "subtaskKey": "IOS-124",
-  "targetRepoPath": "/absolute/path/to/ios/repo"
+  "subtaskKey": "IOS-124"
 }
 ```
 
@@ -81,8 +79,7 @@ Body:
 ```json
 {
   "issueKey": "IOS-123",
-  "diff": "unified diff text",
-  "targetRepoPath": "/absolute/path/to/ios/repo"
+  "diff": "unified diff text"
 }
 ```
 
@@ -96,8 +93,7 @@ Body:
 ```json
 {
   "issueKey": "IOS-123",
-  "diff": "unified diff text",
-  "targetRepoPath": "/absolute/path/to/ios/repo"
+  "diff": "unified diff text"
 }
 ```
 
@@ -107,5 +103,4 @@ Behavior:
 ## Runtime constraints
 
 - Only AWS Bedrock Claude is supported (`LLM_PROVIDER=bedrock`).
-- `targetRepoPath` must point to a readable git repo root.
-- `TARGET_PROJECT_PATH` is optional fallback when `targetRepoPath` is omitted.
+- `TARGET_PROJECT_PATH` must point to a readable git repo root.
