@@ -20,6 +20,7 @@ const IN_PROGRESS_STATUS = process.env.JIRA_STATUS_IN_PROGRESS || "IN PROGRESS";
 const IN_REVIEW_STATUS = process.env.JIRA_STATUS_IN_REVIEW || "IN REVIEW";
 const DONE_STATUS = process.env.JIRA_STATUS_DONE || "DONE";
 const BRANCH_FIELD = process.env.JIRA_BRANCH_FIELD_ID || "";
+const ON_DEMAND_ONLY = String(process.env.ON_DEMAND_ONLY || "false").toLowerCase() === "true";
 
 // ── Webhook signature verification ────────────────────────────────────────
 
@@ -199,6 +200,19 @@ function getStatusTransition(changelog) {
   return { from: item.fromString, to: item.toString };
 }
 
+async function loadAuthorizedIssue(issueKey) {
+  const issue = await jira.getIssue(issueKey);
+  const isInConfiguredBoard = await jira.isIssueInConfiguredBoard(issueKey);
+  if (!isInConfiguredBoard) {
+    throw new Error("Forbidden: issue is outside configured Jira board scope");
+  }
+  const isOwnerIssue = await jira.isAssignedToCurrentUser(issue);
+  if (!isOwnerIssue) {
+    throw new Error("Forbidden: issue is not assigned to Jira token owner");
+  }
+  return issue;
+}
+
 // ── Manual endpoint: create subtasks from parent story ────────────────────
 app.post("/pipeline/create-subtasks", async (req, res) => {
   if (!verifySignature(req)) {
@@ -211,20 +225,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       return res.status(400).json({ error: "issueKey is required" });
     }
 
-    const issue = await jira.getIssue(issueKey);
-    const isInConfiguredBoard = await jira.isIssueInConfiguredBoard(issueKey);
-    if (!isInConfiguredBoard) {
-      return res.status(403).json({
-        error: "Forbidden: issue is outside configured Jira board scope",
-      });
-    }
-
-    const isOwnerIssue = await jira.isAssignedToCurrentUser(issue);
-    if (!isOwnerIssue) {
-      return res.status(403).json({
-        error: "Forbidden: issue is not assigned to Jira token owner",
-      });
-    }
+    const issue = await loadAuthorizedIssue(issueKey);
 
     const normalized = normalizeIssue(issue);
     const breakdown = await runArchitect(normalized);
@@ -241,6 +242,41 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
     await jira.addComment(issueKey, architectComment(issueKey, breakdown, subtaskKeys));
     return res.status(200).json({ created: subtaskKeys.length, subtaskKeys });
   } catch (err) {
+    if (String(err.message || "").startsWith("Forbidden:")) {
+      return res.status(403).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Manual endpoint: run developer stage on demand ─────────────────────────
+app.post("/pipeline/run-developer", async (req, res) => {
+  if (!verifySignature(req)) {
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  try {
+    const { issueKey } = req.body || {};
+    if (!issueKey) {
+      return res.status(400).json({ error: "issueKey is required" });
+    }
+
+    await getProjectContextForPromptCached();
+    const issue = await loadAuthorizedIssue(issueKey);
+    const normalized = normalizeIssue(issue);
+    const devResult = await runDeveloper(normalized);
+    await jira.addComment(issue.key, developerComment(devResult));
+
+    return res.status(200).json({
+      issueKey,
+      prTitle: devResult.prTitle,
+      branchName: devResult.branchName,
+      developerDecision: devResult.developerDecision || null,
+    });
+  } catch (err) {
+    if (String(err.message || "").startsWith("Forbidden:")) {
+      return res.status(403).json({ error: err.message });
+    }
     return res.status(500).json({ error: err.message });
   }
 });
@@ -249,6 +285,13 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
 app.post("/jira/webhook", async (req, res) => {
   if (!verifySignature(req)) {
     return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  if (ON_DEMAND_ONLY) {
+    return res.status(200).json({
+      status: "ignored",
+      reason: "ON_DEMAND_ONLY=true",
+    });
   }
 
   res.status(200).json({ status: "accepted" });

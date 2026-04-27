@@ -25,6 +25,7 @@ npm install
 ```bash
 PORT=3000
 WEBHOOK_SECRET=replace_with_shared_secret
+ON_DEMAND_ONLY=false
 
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=...
@@ -67,10 +68,23 @@ GITHUB_BASE_BRANCH=main
 npm start
 ```
 
+### AWS SSO (Bedrock)
+
+If you use AWS SSO instead of static AWS keys:
+
+```bash
+aws sso login --profile your-profile
+export AWS_PROFILE=your-profile
+```
+
+Then start the server in the same shell.
+
 ## Endpoints
 
 - `POST /pipeline/create-subtasks` with `{ "issueKey": "IOS-123" }`
   - Runs Architect agent and creates Jira subtasks with explicit task contracts.
+- `POST /pipeline/run-developer` with `{ "issueKey": "IOS-123" }`
+  - Runs only Developer stage on demand and posts result to Jira.
 - `POST /jira/webhook`
   - Trigger from Jira issue webhooks for transition automation.
 - `GET /health`
@@ -92,6 +106,11 @@ Board scoping (optional):
 - Set either `JIRA_BOARD_ID` or `JIRA_BOARD_NAME`.
 - If configured, pipeline runs only for issues that belong to that board.
 - `JIRA_BOARD_ID` takes precedence over `JIRA_BOARD_NAME`.
+
+On-demand mode:
+
+- Set `ON_DEMAND_ONLY=true` to ignore Jira webhook automation.
+- Use manual endpoints (`/pipeline/create-subtasks`, `/pipeline/run-developer`) as needed.
 
 Project context requirements:
 
