@@ -87,10 +87,20 @@ Notes:
 
 ## Endpoints
 
-- `POST /pipeline/create-subtasks` with `{ "issueKey": "IOS-123" }`
+- `POST /pipeline/create-subtasks` with `{ "issueKey": "IOS-123", "plannedChanges": "...", "expectations": "..." }`
   - Runs Architect agent and creates Jira subtasks with explicit task contracts.
+  - `plannedChanges` is required and is added to Architect memory before generation.
 - `POST /pipeline/run-developer` with `{ "issueKey": "IOS-123" }`
   - Runs only Developer stage on demand and posts result to Jira.
+  - `plannedChanges` is required and stored in Developer memory.
+- `POST /pipeline/run-tester` with `{ "issueKey": "IOS-123", "plannedChanges": "...", "diff": "..." }`
+  - Runs Tester stage on demand and records tester learning memory.
+- `POST /pipeline/run-reviewer` with `{ "issueKey": "IOS-123", "plannedChanges": "...", ... }`
+  - Runs PR Reviewer stage on demand and records reviewer learning memory.
+- `POST /pipeline/agent-feedback`
+  - Stores rejection/acceptance feedback for any agent (`architect|developer|tester|reviewer`).
+- `POST /pipeline/architect-feedback` (optional)
+  - Stores extra feedback for Architect memory outside the main architect run.
 - `POST /jira/webhook`
   - Trigger from Jira issue webhooks for transition automation.
 - `GET /health`
@@ -118,12 +128,25 @@ On-demand mode:
 - Set `ON_DEMAND_ONLY=true` to ignore Jira webhook automation.
 - Use manual endpoints (`/pipeline/create-subtasks`, `/pipeline/run-developer`) as needed.
 
+Architect learning loop:
+
+- Primary loop: pass `plannedChanges` (required) when calling `/pipeline/create-subtasks`.
+- Optional loop: submit extra feedback later via `/pipeline/architect-feedback`.
+- Same pattern applies to Developer/Tester/Reviewer on their on-demand endpoints.
+- If an output is rejected, call `/pipeline/agent-feedback` immediately so next run uses explicit failure feedback.
+- Memory is persisted and injected into future prompts automatically.
+- Optional env:
+  - `AGENT_MEMORY_DIR` (default `.data/agent-memory`)
+  - `AGENT_MEMORY_MAX_ENTRIES` (default `50`)
+
 Project context requirements:
 
 - `TARGET_PROJECT_PATH` should point to the iOS repository root.
 - `README.md` and `CLAUDE.md` are mandatory in that repo.
 - `skills` content is optional and used as extra context if present.
 - Architect/Developer stages are blocked when mandatory docs are missing.
+- Project context is cached on disk and reused across runs to reduce repeated prompt cost.
+- Optional: `PROJECT_CONTEXT_CACHE_FILE` (default `.data/project-context-cache.json`)
 
 Tester execution requirements:
 

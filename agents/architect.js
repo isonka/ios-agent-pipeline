@@ -1,6 +1,7 @@
 import { callClaude } from "../config/llm.js";
 import { getProjectContextForPromptCached } from "../project/context.js";
 import { parseModelJson } from "../utils/llmJson.js";
+import { formatAgentMemoryForPrompt, loadAgentMemory } from "../project/agentMemory.js";
 
 const SYSTEM_PROMPT = `iOS architect. Break task into subtasks for developer.
 
@@ -32,10 +33,13 @@ JSON only. No fences. No preamble:
 export async function runArchitect(issue, projectContext = "", deps = {}) {
   const llmCall = deps.llmCall || callClaude;
   const getProjectContext = deps.getProjectContext || getProjectContextForPromptCached;
+  const getMemory = deps.getMemory || (() => loadAgentMemory("architect"));
   const issueId = issue.key || issue.number || "UNKNOWN";
   const title = issue.title || issue.fields?.summary || "Untitled";
   const body = issue.body || issue.fields?.description || "No description.";
   const resolvedProjectContext = projectContext || await getProjectContext();
+  const memory = await getMemory();
+  const memoryForPrompt = formatAgentMemoryForPrompt(memory);
   const userMessage = `Break down. iOS subtasks.
 
 #${issueId}: ${title}
@@ -44,6 +48,9 @@ ${body}
 
 Project context:
 ${resolvedProjectContext}
+
+Architect memory (developer feedback from prior tasks):
+${memoryForPrompt}
 
 Hard constraint:
 - Each subtask must be directly executable with zero interpretation.

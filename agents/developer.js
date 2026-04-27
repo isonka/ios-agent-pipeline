@@ -1,6 +1,7 @@
 import { callClaude } from "../config/llm.js";
 import { getProjectContextForPromptCached } from "../project/context.js";
 import { parseModelJson } from "../utils/llmJson.js";
+import { formatAgentMemoryForPrompt, loadAgentMemory } from "../project/agentMemory.js";
 
 const SYSTEM_PROMPT = `Senior iOS dev. Implement task from Jira spec + project context.
 
@@ -38,10 +39,13 @@ JSON only. No fences. No preamble:
 export async function runDeveloper(issue, deps = {}) {
   const llmCall = deps.llmCall || callClaude;
   const getProjectContext = deps.getProjectContext || getProjectContextForPromptCached;
+  const getMemory = deps.getMemory || (() => loadAgentMemory("developer"));
   const issueId = issue.key || issue.number || "UNKNOWN";
   const title = issue.title || issue.fields?.summary || "Untitled";
   const body = issue.body || issue.fields?.description || "No description.";
   const projectContext = await getProjectContext();
+  const memory = await getMemory();
+  const memoryForPrompt = formatAgentMemoryForPrompt(memory);
   const userMessage = `Implement. iOS.
 
 #${issueId}: ${title}
@@ -50,6 +54,9 @@ ${body}
 
 Project context:
 ${projectContext}
+
+Developer memory (learned expectations):
+${memoryForPrompt}
 
 Execution policy:
 - Use project skills when relevant.

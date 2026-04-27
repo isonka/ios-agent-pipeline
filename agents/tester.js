@@ -1,5 +1,6 @@
 import { callClaude } from "../config/llm.js";
 import { parseModelJson } from "../utils/llmJson.js";
+import { formatAgentMemoryForPrompt, loadAgentMemory } from "../project/agentMemory.js";
 
 const SYSTEM_PROMPT = `iOS QA. Test issue against PR diff. Be thorough. No fluff.
 
@@ -41,9 +42,12 @@ JSON only. No fences. No preamble:
  */
 export async function runTester(issue, diff, deps = {}) {
   const llmCall = deps.llmCall || callClaude;
+  const getMemory = deps.getMemory || (() => loadAgentMemory("tester"));
   const issueId = issue.key || issue.number || "UNKNOWN";
   const title = issue.title || issue.fields?.summary || "Untitled";
   const body = issue.body || issue.fields?.description || "";
+  const memory = await getMemory();
+  const memoryForPrompt = formatAgentMemoryForPrompt(memory);
   const userMessage = `Test. iOS.
 
 #${issueId}: ${title}
@@ -51,6 +55,9 @@ ${body}
 
 Diff:
 ${diff || "No diff."}
+
+Tester memory (learned expectations):
+${memoryForPrompt}
 
 Required output quality gate:
 - If manual behavior does not work as expected, set verdict FAIL.

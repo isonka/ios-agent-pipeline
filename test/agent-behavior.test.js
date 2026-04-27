@@ -34,6 +34,7 @@ test("runArchitect uses provided project context and parses JSON", async () => {
 test("runArchitect fetches context when none is provided", async () => {
   let getContextCalled = 0;
   let capturedUserMessage = "";
+  let getMemoryCalled = 0;
 
   await runArchitect(
     { key: "MP-2", title: "Improve search" },
@@ -42,6 +43,14 @@ test("runArchitect fetches context when none is provided", async () => {
       getProjectContext: async () => {
         getContextCalled += 1;
         return "CTX_FROM_CACHE";
+      },
+      getMemory: async () => {
+        getMemoryCalled += 1;
+        return {
+          feedback: [
+            { issueKey: "MP-OLD", rating: "good", whatWorked: "Explicit criteria" },
+          ],
+        };
       },
       llmCall: async (_system, userMessage) => {
         capturedUserMessage = userMessage;
@@ -56,7 +65,9 @@ test("runArchitect fetches context when none is provided", async () => {
   );
 
   assert.equal(getContextCalled, 1);
+  assert.equal(getMemoryCalled, 1);
   assert.match(capturedUserMessage, /CTX_FROM_CACHE/);
+  assert.match(capturedUserMessage, /Architect memory/);
 });
 
 test("runDeveloper includes execution policy and context", async () => {

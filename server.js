@@ -10,6 +10,7 @@ import * as jira from "./jira/client.js";
 import { createDraftPullRequest } from "./github/cloudClient.js";
 import { getProjectContextForPromptCached } from "./project/context.js";
 import { ensureSnapshotsAndRunTests } from "./project/testRunner.js";
+import { appendAgentFeedback, loadAgentMemory } from "./project/agentMemory.js";
 
 const app = express();
 app.use(express.json());
@@ -49,6 +50,23 @@ function architectComment(issueKey, breakdown, subtaskKeys) {
     "",
     "Subtasks created:",
     created,
+  ].join("\n");
+}
+
+function architectFeedbackRequestComment(issueKey, subtaskKeys) {
+  return [
+    "Architect feedback requested.",
+    `Issue: ${issueKey}`,
+    `Subtasks generated: ${subtaskKeys.length}`,
+    "",
+    "Reply with this template in a Jira comment or use /pipeline/agent-feedback:",
+    "#agent-feedback",
+    "agent: architect",
+    "rating: good|neutral|bad",
+    "whatWorked: ...",
+    "whatFailed: ...",
+    "expectations: ...",
+    "notes: ...",
   ].join("\n");
 }
 
@@ -220,12 +238,29 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
   }
 
   try {
-    const { issueKey } = req.body || {};
+    const { issueKey, plannedChanges, expectations = "" } = req.body || {};
     if (!issueKey) {
       return res.status(400).json({ error: "issueKey is required" });
     }
+    if (!plannedChanges) {
+      return res.status(400).json({
+        error: "plannedChanges is required. Provide your expected plan so Architect can learn before creating subtasks.",
+      });
+    }
 
     const issue = await loadAuthorizedIssue(issueKey);
+    const plannedChangesText = typeof plannedChanges === "string"
+      ? plannedChanges
+      : JSON.stringify(plannedChanges);
+    await appendAgentFeedback("architect", {
+      issueKey,
+      rating: "plan_input",
+      whatWorked: "",
+      whatFailed: "",
+      expectations,
+      notes: plannedChangesText,
+      source: "planned_input",
+    });
 
     const normalized = normalizeIssue(issue);
     const breakdown = await runArchitect(normalized);
@@ -239,7 +274,19 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       subtaskKeys.push(created.key);
     }
 
+    const runSummary = `Generated ${subtaskKeys.length} subtasks: ${subtaskKeys.join(", ")}`;
+    await appendAgentFeedback("architect", {
+      issueKey,
+      rating: "neutral",
+      whatWorked: runSummary,
+      whatFailed: "",
+      expectations,
+      notes: "Auto-recorded architect run summary.",
+      source: "auto_run_summary",
+    });
+
     await jira.addComment(issueKey, architectComment(issueKey, breakdown, subtaskKeys));
+    await jira.addComment(issueKey, architectFeedbackRequestComment(issueKey, subtaskKeys));
     return res.status(200).json({ created: subtaskKeys.length, subtaskKeys });
   } catch (err) {
     if (String(err.message || "").startsWith("Forbidden:")) {
@@ -256,13 +303,28 @@ app.post("/pipeline/run-developer", async (req, res) => {
   }
 
   try {
-    const { issueKey } = req.body || {};
+    const { issueKey, plannedChanges, expectations = "" } = req.body || {};
     if (!issueKey) {
       return res.status(400).json({ error: "issueKey is required" });
+    }
+    if (!plannedChanges) {
+      return res.status(400).json({
+        error: "plannedChanges is required for developer learning memory.",
+      });
     }
 
     await getProjectContextForPromptCached();
     const issue = await loadAuthorizedIssue(issueKey);
+    const plannedChangesText = typeof plannedChanges === "string"
+      ? plannedChanges
+      : JSON.stringify(plannedChanges);
+    await appendAgentFeedback("developer", {
+      issueKey,
+      rating: "plan_input",
+      expectations,
+      notes: plannedChangesText,
+      source: "planned_input",
+    });
     const normalized = normalizeIssue(issue);
     const devResult = await runDeveloper(normalized);
     await jira.addComment(issue.key, developerComment(devResult));
@@ -278,6 +340,186 @@ app.post("/pipeline/run-developer", async (req, res) => {
       return res.status(403).json({ error: err.message });
     }
     return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/pipeline/run-tester", async (req, res) => {
+  if (!verifySignature(req)) {
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  try {
+    const { issueKey, plannedChanges, expectations = "", diff = "Diff supplied manually." } = req.body || {};
+    if (!issueKey) return res.status(400).json({ error: "issueKey is required" });
+    if (!plannedChanges) {
+      return res.status(400).json({
+        error: "plannedChanges is required for tester learning memory.",
+      });
+    }
+
+    const issue = await loadAuthorizedIssue(issueKey);
+    const plannedChangesText = typeof plannedChanges === "string"
+      ? plannedChanges
+      : JSON.stringify(plannedChanges);
+    await appendAgentFeedback("tester", {
+      issueKey,
+      rating: "plan_input",
+      expectations,
+      notes: plannedChangesText,
+      source: "planned_input",
+    });
+
+    const normalized = normalizeIssue(issue);
+    const testerResult = await runTester(normalized, diff);
+    await jira.addComment(issue.key, testerComment(testerResult));
+    const execution = await ensureSnapshotsAndRunTests(issue.key);
+    await jira.addComment(issue.key, testerExecutionComment(execution));
+
+    return res.status(200).json({
+      issueKey,
+      verdict: testerResult.verdict,
+      executionSuccess: Boolean(execution.testRun?.success),
+    });
+  } catch (err) {
+    if (String(err.message || "").startsWith("Forbidden:")) {
+      return res.status(403).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/pipeline/run-reviewer", async (req, res) => {
+  if (!verifySignature(req)) {
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  try {
+    const {
+      issueKey,
+      plannedChanges,
+      expectations = "",
+      prNumber = 0,
+      prTitle = "",
+      prBody = "",
+      diff = "Diff supplied manually.",
+      qaSummary = "",
+    } = req.body || {};
+    if (!issueKey) return res.status(400).json({ error: "issueKey is required" });
+    if (!plannedChanges) {
+      return res.status(400).json({
+        error: "plannedChanges is required for reviewer learning memory.",
+      });
+    }
+
+    const issue = await loadAuthorizedIssue(issueKey);
+    const plannedChangesText = typeof plannedChanges === "string"
+      ? plannedChanges
+      : JSON.stringify(plannedChanges);
+    await appendAgentFeedback("reviewer", {
+      issueKey,
+      rating: "plan_input",
+      expectations,
+      notes: plannedChangesText,
+      source: "planned_input",
+    });
+
+    const reviewResult = await runPRReviewer(
+      { number: prNumber || 0, title: prTitle || issue.fields?.summary || "PR", body: prBody || "" },
+      diff,
+      [{ body: qaSummary || "No QA summary provided." }]
+    );
+    await jira.addComment(issue.key, reviewerComment(reviewResult, "manual/on-demand"));
+    return res.status(200).json({
+      issueKey,
+      verdict: reviewResult.verdict,
+      mergeReady: reviewResult.reviewerDecision?.mergeReady ?? null,
+    });
+  } catch (err) {
+    if (String(err.message || "").startsWith("Forbidden:")) {
+      return res.status(403).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Manual endpoint: feedback loop for architect memory ────────────────────
+app.post("/pipeline/architect-feedback", async (req, res) => {
+  if (!verifySignature(req)) {
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  try {
+    const {
+      issueKey,
+      rating = "neutral",
+      whatWorked = "",
+      whatFailed = "",
+      expectations = "",
+      developerNotes = "",
+    } = req.body || {};
+
+    if (!issueKey) {
+      return res.status(400).json({ error: "issueKey is required" });
+    }
+
+    const saved = await appendAgentFeedback("architect", {
+      issueKey,
+      rating,
+      whatWorked,
+      whatFailed,
+      expectations,
+      notes: developerNotes,
+      source: "manual_feedback",
+    });
+
+    return res.status(200).json({
+      status: "saved",
+      totalEntries: saved.feedback.length,
+      updatedAt: saved.updatedAt,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Manual endpoint: generic feedback loop for any agent ───────────────────
+app.post("/pipeline/agent-feedback", async (req, res) => {
+  if (!verifySignature(req)) {
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  try {
+    const {
+      agent,
+      issueKey,
+      rating = "neutral",
+      whatWorked = "",
+      whatFailed = "",
+      expectations = "",
+      notes = "",
+    } = req.body || {};
+
+    if (!agent) return res.status(400).json({ error: "agent is required" });
+    if (!issueKey) return res.status(400).json({ error: "issueKey is required" });
+
+    const saved = await appendAgentFeedback(agent, {
+      issueKey,
+      rating,
+      whatWorked,
+      whatFailed,
+      expectations,
+      notes,
+      source: "manual_feedback",
+    });
+
+    return res.status(200).json({
+      status: "saved",
+      agent,
+      totalEntries: saved.feedback.length,
+      updatedAt: saved.updatedAt,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
 });
 
@@ -382,6 +624,24 @@ app.get("/debug/whoami", async (_, res) => {
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/debug/architect-memory", async (_, res) => {
+  try {
+    const memory = await loadAgentMemory("architect");
+    return res.status(200).json(memory);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/debug/agent-memory/:agent", async (req, res) => {
+  try {
+    const memory = await loadAgentMemory(req.params.agent);
+    return res.status(200).json(memory);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
 });
 

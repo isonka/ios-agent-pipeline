@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const MANDATORY_DOCS = ["README.md", "CLAUDE.md"];
@@ -7,6 +7,7 @@ const MAX_DOC_CHARS = 4000;
 const MAX_SKILL_FILES = 12;
 const MAX_SKILL_CHARS = 1200;
 let cachedFormattedContext = null;
+let cachedSignature = null;
 
 function shorten(text, maxChars = MAX_DOC_CHARS) {
   if (!text) return "";
@@ -33,6 +34,66 @@ async function listFilesIfExists(dirPath) {
     if (err && err.code === "ENOENT") return [];
     throw err;
   }
+}
+
+function getCacheFilePath() {
+  const configured = process.env.PROJECT_CONTEXT_CACHE_FILE || ".data/project-context-cache.json";
+  return path.isAbsolute(configured) ? configured : path.join(process.cwd(), configured);
+}
+
+async function loadPersistentCache() {
+  const filePath = getCacheFilePath();
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+async function savePersistentCache(payload) {
+  const filePath = getCacheFilePath();
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+async function computeProjectContextSignature(projectPath) {
+  const fingerprints = [];
+
+  for (const file of MANDATORY_DOCS) {
+    const fullPath = path.join(projectPath, file);
+    const info = await stat(fullPath).catch(() => null);
+    fingerprints.push({
+      path: file,
+      exists: Boolean(info),
+      mtimeMs: info?.mtimeMs || 0,
+      size: info?.size || 0,
+    });
+  }
+
+  for (const dir of OPTIONAL_SKILLS_DIRS) {
+    const absolute = path.join(projectPath, dir);
+    const files = await listFilesIfExists(absolute);
+    for (const file of files) {
+      const fullPath = path.join(absolute, file);
+      const info = await stat(fullPath).catch(() => null);
+      fingerprints.push({
+        path: `${dir}/${file}`,
+        exists: Boolean(info),
+        mtimeMs: info?.mtimeMs || 0,
+        size: info?.size || 0,
+      });
+    }
+  }
+
+  const signaturePayload = {
+    projectPath,
+    fingerprints: fingerprints.sort((a, b) => a.path.localeCompare(b.path)),
+  };
+  return JSON.stringify(signaturePayload);
 }
 
 export async function buildProjectContext() {
@@ -127,15 +188,43 @@ export function formatProjectContextForPrompt(context) {
 }
 
 export async function getProjectContextForPromptCached({ forceRefresh = false } = {}) {
-  if (!forceRefresh && cachedFormattedContext) {
+  const projectPath = process.env.TARGET_PROJECT_PATH;
+  if (!projectPath) {
+    throw new Error("Missing TARGET_PROJECT_PATH. Set it in your environment.");
+  }
+
+  const signature = await computeProjectContextSignature(projectPath);
+
+  if (!forceRefresh && cachedFormattedContext && cachedSignature === signature) {
     return cachedFormattedContext;
   }
 
+  if (!forceRefresh) {
+    const persisted = await loadPersistentCache();
+    if (
+      persisted &&
+      persisted.signature === signature &&
+      typeof persisted.formattedContext === "string"
+    ) {
+      cachedSignature = signature;
+      cachedFormattedContext = persisted.formattedContext;
+      return cachedFormattedContext;
+    }
+  }
+
   const built = await buildProjectContext();
-  cachedFormattedContext = formatProjectContextForPrompt(built);
+  const formatted = formatProjectContextForPrompt(built);
+  cachedSignature = signature;
+  cachedFormattedContext = formatted;
+  await savePersistentCache({
+    signature,
+    formattedContext: formatted,
+    updatedAt: new Date().toISOString(),
+  });
   return cachedFormattedContext;
 }
 
 export function resetProjectContextCache() {
   cachedFormattedContext = null;
+  cachedSignature = null;
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -71,6 +71,7 @@ test("formatProjectContextForPrompt includes skills summary", async () => {
 test("getProjectContextForPromptCached builds once and reuses cache", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pipeline-context-cache-"));
   process.env.TARGET_PROJECT_PATH = dir;
+  process.env.PROJECT_CONTEXT_CACHE_FILE = path.join(dir, ".cache", "context.json");
 
   await writeFile(path.join(dir, "README.md"), "Initial README");
   await writeFile(path.join(dir, "CLAUDE.md"), "Initial CLAUDE");
@@ -79,11 +80,17 @@ test("getProjectContextForPromptCached builds once and reuses cache", async () =
   ctx.resetProjectContextCache();
 
   const first = await ctx.getProjectContextForPromptCached();
+  await new Promise((resolve) => setTimeout(resolve, 20));
   await writeFile(path.join(dir, "README.md"), "Changed README");
   const second = await ctx.getProjectContextForPromptCached();
   const refreshed = await ctx.getProjectContextForPromptCached({ forceRefresh: true });
 
-  assert.equal(first, second);
+  assert.notEqual(first, second);
   assert.match(first, /Initial README/);
+  assert.match(second, /Changed README/);
   assert.match(refreshed, /Changed README/);
+
+  const persisted = JSON.parse(await readFile(process.env.PROJECT_CONTEXT_CACHE_FILE, "utf8"));
+  assert.equal(typeof persisted.formattedContext, "string");
+  assert.match(persisted.formattedContext, /Changed README/);
 });

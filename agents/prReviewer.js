@@ -1,5 +1,6 @@
 import { callClaude } from "../config/llm.js";
 import { parseModelJson } from "../utils/llmJson.js";
+import { formatAgentMemoryForPrompt, loadAgentMemory } from "../project/agentMemory.js";
 
 const SYSTEM_PROMPT = `Principal iOS engineer. Final PR review. Approve only if prod-ready.
 
@@ -37,6 +38,9 @@ JSON only. No fences. No preamble:
  */
 export async function runPRReviewer(pr, diff, comments, deps = {}) {
   const llmCall = deps.llmCall || callClaude;
+  const getMemory = deps.getMemory || (() => loadAgentMemory("reviewer"));
+  const memory = await getMemory();
+  const memoryForPrompt = formatAgentMemoryForPrompt(memory);
   const testerComment = comments
     .filter((c) => c.body?.includes("🧪 Tester Agent"))
     .map((c) => c.body)
@@ -52,6 +56,9 @@ ${testerComment || "No QA."}
 
 Diff:
 ${diff || "No diff."}
+
+Reviewer memory (learned expectations):
+${memoryForPrompt}
 
 Quality gate:
 - If merge is not safe, verdict must be REQUEST_CHANGES and mergeReady false.`;
