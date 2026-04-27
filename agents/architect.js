@@ -1,5 +1,6 @@
 import { callClaude } from "../config/llm.js";
 import { getProjectContextForPromptCached } from "../project/context.js";
+import { parseModelJson } from "../utils/llmJson.js";
 
 const SYSTEM_PROMPT = `iOS architect. Break task into subtasks for developer.
 
@@ -49,10 +50,5 @@ Hard constraint:
 - Include exact file paths/modules, acceptance checks, and explicit done criteria.`;
 
   const raw = await llmCall(SYSTEM_PROMPT, userMessage);
-
-  try {
-    return JSON.parse(raw.replace(/```json|```/g, "").trim());
-  } catch {
-    throw new Error(`Architect returned invalid JSON:\n${raw}`);
-  }
+  return parseModelJson(raw, "Architect");
 }

@@ -1,4 +1,5 @@
 import { callClaude } from "../config/llm.js";
+import { parseModelJson } from "../utils/llmJson.js";
 
 const SYSTEM_PROMPT = `Principal iOS engineer. Final PR review. Approve only if prod-ready.
 
@@ -56,10 +57,5 @@ Quality gate:
 - If merge is not safe, verdict must be REQUEST_CHANGES and mergeReady false.`;
 
   const raw = await llmCall(SYSTEM_PROMPT, userMessage);
-
-  try {
-    return JSON.parse(raw.replace(/```json|```/g, "").trim());
-  } catch {
-    throw new Error(`PR Reviewer returned invalid JSON:\n${raw}`);
-  }
+  return parseModelJson(raw, "PR Reviewer");
 }

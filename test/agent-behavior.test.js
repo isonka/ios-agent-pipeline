@@ -108,6 +108,32 @@ test("runDeveloper throws clear error on invalid model JSON", async () => {
   );
 });
 
+test("runDeveloper parses JSON even with text preamble", async () => {
+  const result = await runDeveloper(
+    { key: "MP-42", title: "Preamble output case" },
+    {
+      getProjectContext: async () => "CTX",
+      llmCall: async () => `I will implement this now.
+{
+  "implementationPlan": "plan",
+  "prTitle": "title",
+  "prDescription": "desc",
+  "branchName": "feature/mp-42",
+  "testStubs": "tests",
+  "developerDecision": {
+    "usedSkill": false,
+    "skillFilesUsed": [],
+    "fallbackUsed": true,
+    "reason": "No relevant skill."
+  }
+}`,
+    }
+  );
+
+  assert.equal(result.prTitle, "title");
+  assert.equal(result.developerDecision.fallbackUsed, true);
+});
+
 test("runTester includes manual and integration quality gates", async () => {
   let capturedUserMessage = "";
   const issue = { key: "MP-8", title: "Checkout flow", body: "Add analytics events" };

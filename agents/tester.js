@@ -1,4 +1,5 @@
 import { callClaude } from "../config/llm.js";
+import { parseModelJson } from "../utils/llmJson.js";
 
 const SYSTEM_PROMPT = `iOS QA. Test issue against PR diff. Be thorough. No fluff.
 
@@ -56,10 +57,5 @@ Required output quality gate:
 - If critical integration tests fail, set verdict FAIL.`;
 
   const raw = await llmCall(SYSTEM_PROMPT, userMessage);
-
-  try {
-    return JSON.parse(raw.replace(/```json|```/g, "").trim());
-  } catch {
-    throw new Error(`Tester returned invalid JSON:\n${raw}`);
-  }
+  return parseModelJson(raw, "Tester");
 }

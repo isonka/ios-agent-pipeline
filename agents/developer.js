@@ -1,5 +1,6 @@
 import { callClaude } from "../config/llm.js";
 import { getProjectContextForPromptCached } from "../project/context.js";
+import { parseModelJson } from "../utils/llmJson.js";
 
 const SYSTEM_PROMPT = `Senior iOS dev. Implement task from Jira spec + project context.
 
@@ -11,6 +12,7 @@ Rules:
 - If relevant skill exists, apply it strictly.
 - If no relevant skill exists, implement directly using existing modules/patterns in project docs as examples.
 - Never block on missing skills.
+- Output strictly JSON. No explanation text before or after JSON.
 
 JSON only. No fences. No preamble:
 {
@@ -55,10 +57,5 @@ Execution policy:
 - Deliver concrete file-level implementation plan with no interpretation gaps.`;
 
   const raw = await llmCall(SYSTEM_PROMPT, userMessage);
-
-  try {
-    return JSON.parse(raw.replace(/```json|```/g, "").trim());
-  } catch {
-    throw new Error(`Developer returned invalid JSON:\n${raw}`);
-  }
+  return parseModelJson(raw, "Developer");
 }
