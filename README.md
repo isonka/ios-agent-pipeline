@@ -138,6 +138,11 @@ Architect learning loop:
 - Optional env:
   - `AGENT_MEMORY_DIR` (default `.data/agent-memory`)
   - `AGENT_MEMORY_MAX_ENTRIES` (default `50`)
+- Memory files are created locally in this repo on startup:
+  - `.data/agent-memory/architect.json`
+  - `.data/agent-memory/developer.json`
+  - `.data/agent-memory/tester.json`
+  - `.data/agent-memory/reviewer.json`
 
 Project context requirements:
 

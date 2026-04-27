@@ -10,7 +10,7 @@ import * as jira from "./jira/client.js";
 import { createDraftPullRequest } from "./github/cloudClient.js";
 import { getProjectContextForPromptCached } from "./project/context.js";
 import { ensureSnapshotsAndRunTests } from "./project/testRunner.js";
-import { appendAgentFeedback, loadAgentMemory } from "./project/agentMemory.js";
+import { appendAgentFeedback, initializeAgentMemoryFiles, loadAgentMemory } from "./project/agentMemory.js";
 
 const app = express();
 app.use(express.json());
@@ -652,6 +652,9 @@ app.get("/health", (_, res) => res.json({ status: "ok", timestamp: new Date().to
 // ── Start ──────────────────────────────────────────────────────────────────
 
 app.listen(PORT, async () => {
+  await initializeAgentMemoryFiles().catch((err) => {
+    console.error(`Failed to initialize local agent memory files: ${err.message}`);
+  });
   console.log(`\n🚀 iOS Agent Pipeline running on :${PORT}`);
   console.log(`   Bedrock model: ${process.env.BEDROCK_MODEL_ID || "anthropic.claude-sonnet-4-5"}`);
   console.log(`   Jira: ${process.env.JIRA_BASE_URL || "not configured"}`);

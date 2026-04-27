@@ -14,11 +14,13 @@ test("runArchitect uses provided project context and parses JSON", async () => {
     issue,
     "PROJECT_CTX",
     {
+      getProjectUnderstanding: async () => "UNDERSTANDING",
+      getMemory: async () => ({ feedback: [{ source: "auto_project_bootstrap" }] }),
       llmCall: async (_system, userMessage) => {
         capturedUserMessage = userMessage;
         return JSON.stringify({
           summary: "ok",
-          subtasks: [{ title: "t1", body: "b1", estimate: "S" }],
+          subtasks: [{ title: "Update DiscoverPackagesView.swift", body: "Edit Features/Discover/DiscoverPackagesView.swift", estimate: "S" }],
           risks: [],
           dependencies: [],
         });
@@ -40,6 +42,7 @@ test("runArchitect fetches context when none is provided", async () => {
     { key: "MP-2", title: "Improve search" },
     "",
     {
+      getProjectUnderstanding: async () => "UNDERSTANDING",
       getProjectContext: async () => {
         getContextCalled += 1;
         return "CTX_FROM_CACHE";
@@ -56,7 +59,7 @@ test("runArchitect fetches context when none is provided", async () => {
         capturedUserMessage = userMessage;
         return JSON.stringify({
           summary: "ok",
-          subtasks: [],
+          subtasks: [{ title: "Adjust SearchCoordinator.swift", body: "Modify Features/Search/SearchCoordinator.swift", estimate: "S" }],
           risks: [],
           dependencies: [],
         });
@@ -68,6 +71,34 @@ test("runArchitect fetches context when none is provided", async () => {
   assert.equal(getMemoryCalled, 1);
   assert.match(capturedUserMessage, /CTX_FROM_CACHE/);
   assert.match(capturedUserMessage, /Architect memory/);
+});
+
+test("runArchitect rejects placeholder/generic subtask output", async () => {
+  await assert.rejects(
+    () =>
+      runArchitect(
+        { key: "MP-77", title: "Grounded output required" },
+        "PROJECT_CTX",
+        {
+          getProjectUnderstanding: async () => "UNDERSTANDING",
+          getMemory: async () => ({ feedback: [{ source: "auto_project_bootstrap" }] }),
+          llmCall: async () =>
+            JSON.stringify({
+              summary: "summary",
+              subtasks: [
+                {
+                  title: "Create [DiscoverModulePath]/DiscoverPackagesView.swift",
+                  body: "Replace coordinator/factory file from audit.",
+                  estimate: "M",
+                },
+              ],
+              risks: [],
+              dependencies: [],
+            }),
+        }
+      ),
+    /generic\/non-grounded/
+  );
 });
 
 test("runDeveloper includes execution policy and context", async () => {

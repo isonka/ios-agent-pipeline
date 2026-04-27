@@ -1,0 +1,27 @@
+{
+  "agent": "architect",
+  "version": 1,
+  "updatedAt": "2026-04-27T12:33:00.375Z",
+  "feedback": [
+    {
+      "timestamp": "2026-04-27T12:29:05.995Z",
+      "issueKey": "MP-2",
+      "rating": "bootstrap",
+      "whatWorked": "Project understanding initialized.",
+      "whatFailed": "",
+      "expectations": "Always create subtasks grounded in existing files and architecture patterns.",
+      "notes": "UNDERSTANDING",
+      "source": "auto_project_bootstrap"
+    },
+    {
+      "timestamp": "2026-04-27T12:33:00.375Z",
+      "issueKey": "MP-2",
+      "rating": "bootstrap",
+      "whatWorked": "Project understanding initialized.",
+      "whatFailed": "",
+      "expectations": "Always create subtasks grounded in existing files and architecture patterns.",
+      "notes": "UNDERSTANDING",
+      "source": "auto_project_bootstrap"
+    }
+  ]
+}

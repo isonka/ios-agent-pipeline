@@ -95,3 +95,14 @@ export function formatAgentMemoryForPrompt(memory) {
     `- source: ${item.source || "manual"}`,
   ].join("\n")).join("\n\n");
 }
+
+export async function initializeAgentMemoryFiles() {
+  const dir = getMemoryDir();
+  await mkdir(dir, { recursive: true });
+
+  for (const agent of ALLOWED_AGENTS) {
+    const existing = await loadAgentMemory(agent);
+    const filePath = getMemoryFilePath(agent);
+    await writeFile(filePath, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+  }
+}
