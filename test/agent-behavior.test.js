@@ -73,32 +73,31 @@ test("runArchitect fetches context when none is provided", async () => {
   assert.match(capturedUserMessage, /Architect memory/);
 });
 
-test("runArchitect rejects placeholder/generic subtask output", async () => {
-  await assert.rejects(
-    () =>
-      runArchitect(
-        { key: "MP-77", title: "Grounded output required" },
-        "PROJECT_CTX",
-        {
-          getProjectUnderstanding: async () => "UNDERSTANDING",
-          getMemory: async () => ({ feedback: [{ source: "auto_project_bootstrap" }] }),
-          llmCall: async () =>
-            JSON.stringify({
-              summary: "summary",
-              subtasks: [
-                {
-                  title: "Create [DiscoverModulePath]/DiscoverPackagesView.swift",
-                  body: "Replace coordinator/factory file from audit.",
-                  estimate: "M",
-                },
-              ],
-              risks: [],
-              dependencies: [],
-            }),
-        }
-      ),
-    /generic\/non-grounded/
+test("runArchitect falls back to grounded subtasks for generic output", async () => {
+  const result = await runArchitect(
+    { key: "MP-77", title: "Grounded output required" },
+    "PROJECT_CTX",
+    {
+      getProjectUnderstanding: async () => "UNDERSTANDING",
+      getMemory: async () => ({ feedback: [{ source: "auto_project_bootstrap" }] }),
+      llmCall: async () =>
+        JSON.stringify({
+          summary: "summary",
+          subtasks: [
+            {
+              title: "Create [DiscoverModulePath]/DiscoverPackagesView.swift",
+              body: "Replace coordinator/factory file from audit.",
+              estimate: "M",
+            },
+          ],
+          risks: [],
+          dependencies: [],
+        }),
+    }
   );
+  assert.match(result.summary, /Fallback grounded breakdown/);
+  assert.ok(Array.isArray(result.subtasks));
+  assert.ok(result.subtasks.length >= 1);
 });
 
 test("runArchitect retries once with repair prompt when generic", async () => {

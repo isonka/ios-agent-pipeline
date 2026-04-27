@@ -55,6 +55,47 @@ Hard requirements:
 - No "e.g.", "from audit", "same directory", "coordinator/factory file".
 - If unsure about concrete location, put unresolved item in dependencies instead of inventing vague text.`;
 
+function extractSwiftPathsFromUnderstanding(understandingText) {
+  const matches = String(understandingText || "").match(/[A-Za-z0-9_\-/]+\.swift/g) || [];
+  const unique = Array.from(new Set(matches));
+  return unique.slice(0, 6);
+}
+
+function buildGroundedFallback(issueId, title, understandingText) {
+  const paths = extractSwiftPathsFromUnderstanding(understandingText);
+  const primary = paths[0] || "Sources/App/AppCoordinator.swift";
+  const secondary = paths[1] || "Sources/App/FeatureRouter.swift";
+  const tertiary = paths[2] || "Sources/App/ViewModel.swift";
+
+  return {
+    summary: `Fallback grounded breakdown for ${issueId}: ${title}`,
+    subtasks: [
+      {
+        title: `Trace entry points for ${issueId}`,
+        body: `Identify runtime entry flow using ${primary} and ${secondary}. Document exact symbols to change and expected behavior.`,
+        labels: ["agent:developer"],
+        estimate: "S",
+      },
+      {
+        title: `Implement concrete change set for ${issueId}`,
+        body: `Apply implementation in ${primary}, ${secondary}, and ${tertiary}. Keep edits minimal and aligned with existing architecture patterns.`,
+        labels: ["agent:developer"],
+        estimate: "M",
+      },
+      {
+        title: `Validate regressions for ${issueId}`,
+        body: `Run focused validation around ${primary}, ${secondary}, ${tertiary} and define explicit pass/fail criteria.`,
+        labels: ["agent:developer"],
+        estimate: "S",
+      },
+    ],
+    risks: ["Fallback plan generated after two non-grounded model responses."],
+    dependencies: [
+      "Provide additional module-specific file paths in plannedChanges to improve precision on next run.",
+    ],
+  };
+}
+
 function validateArchitectOutput(output) {
   const subtasks = Array.isArray(output?.subtasks) ? output.subtasks : [];
   if (!subtasks.length) {
@@ -146,8 +187,14 @@ Hard constraint:
   } catch (err) {
     const repairMessage = `Original request:\n${userMessage}\n\nRejected output:\n${raw}\n\nRejection reason:\n${err.message}`;
     const repairedRaw = await llmCall(REPAIR_SYSTEM_PROMPT, repairMessage);
-    const repaired = parseModelJson(repairedRaw, "Architect");
-    validateArchitectOutput(repaired);
-    return repaired;
+    try {
+      const repaired = parseModelJson(repairedRaw, "Architect");
+      validateArchitectOutput(repaired);
+      return repaired;
+    } catch {
+      const fallback = buildGroundedFallback(issueId, title, understandingText);
+      validateArchitectOutput(fallback);
+      return fallback;
+    }
   }
 }
