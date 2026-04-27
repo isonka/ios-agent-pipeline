@@ -101,6 +101,45 @@ test("runArchitect rejects placeholder/generic subtask output", async () => {
   );
 });
 
+test("runArchitect retries once with repair prompt when generic", async () => {
+  let calls = 0;
+  const result = await runArchitect(
+    { key: "MP-88", title: "Retry generic architect output" },
+    "PROJECT_CTX",
+    {
+      getProjectUnderstanding: async () => "UNDERSTANDING",
+      getMemory: async () => ({ feedback: [{ source: "auto_project_bootstrap" }] }),
+      llmCall: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return JSON.stringify({
+            summary: "generic",
+            subtasks: [{ title: "Update [ModulePath]", body: "same directory", estimate: "M" }],
+            risks: [],
+            dependencies: [],
+          });
+        }
+        return JSON.stringify({
+          summary: "grounded",
+          subtasks: [
+            {
+              title: "Update DiscoverCoordinator.swift route",
+              body: "Modify Features/Discover/DiscoverCoordinator.swift to use DiscoverPackagesView.",
+              labels: ["agent:developer"],
+              estimate: "S",
+            },
+          ],
+          risks: [],
+          dependencies: [],
+        });
+      },
+    }
+  );
+
+  assert.equal(calls, 2);
+  assert.equal(result.summary, "grounded");
+});
+
 test("runDeveloper includes execution policy and context", async () => {
   let capturedUserMessage = "";
   const issue = { key: "MP-3", title: "Refactor list cells", body: "Task details" };

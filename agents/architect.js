@@ -39,6 +39,21 @@ const FORBIDDEN_GENERIC_PATTERNS = [
 ];
 
 const CONCRETE_PATH_PATTERN = /[A-Za-z0-9_\-./]+\.swift\b|[A-Za-z0-9_\-]+\/[A-Za-z0-9_\-/]+/;
+const REPAIR_SYSTEM_PROMPT = `You are fixing an architect JSON response that was rejected as generic.
+
+Return JSON only (no prose) in the exact schema:
+{
+  "summary": "...",
+  "subtasks": [{ "title": "...", "body": "...", "labels": ["agent:developer"], "estimate": "S|M|L" }],
+  "risks": ["..."],
+  "dependencies": ["..."]
+}
+
+Hard requirements:
+- Every subtask must reference at least one concrete .swift file path or concrete module path.
+- No placeholders in brackets.
+- No "e.g.", "from audit", "same directory", "coordinator/factory file".
+- If unsure about concrete location, put unresolved item in dependencies instead of inventing vague text.`;
 
 function validateArchitectOutput(output) {
   const subtasks = Array.isArray(output?.subtasks) ? output.subtasks : [];
@@ -124,7 +139,15 @@ Hard constraint:
 - Include exact file paths/modules, acceptance checks, and explicit done criteria.`;
 
   const raw = await llmCall(SYSTEM_PROMPT, userMessage);
-  const parsed = parseModelJson(raw, "Architect");
-  validateArchitectOutput(parsed);
-  return parsed;
+  try {
+    const parsed = parseModelJson(raw, "Architect");
+    validateArchitectOutput(parsed);
+    return parsed;
+  } catch (err) {
+    const repairMessage = `Original request:\n${userMessage}\n\nRejected output:\n${raw}\n\nRejection reason:\n${err.message}`;
+    const repairedRaw = await llmCall(REPAIR_SYSTEM_PROMPT, repairMessage);
+    const repaired = parseModelJson(repairedRaw, "Architect");
+    validateArchitectOutput(repaired);
+    return repaired;
+  }
 }
