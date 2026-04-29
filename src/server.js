@@ -4,9 +4,12 @@ import { validateEnv, envConfig } from "./config/env.js";
 import { resolveTargetRepoPath } from "./services/repoPath.js";
 import { buildProjectContext } from "./services/projectContext.js";
 import { loadRunState, saveRunState } from "./services/runStore.js";
+import {
+  createArchitectSubtasks,
+  ensureArchitectMemory,
+} from "./services/pipeline/architectFlow.js";
 import { BedrockClaudeClient } from "./llm/bedrockClaude.js";
 import { JiraClient } from "./integrations/jiraClient.js";
-import { runArchitect } from "./agents/architect.js";
 import { runDeveloper } from "./agents/developer.js";
 import { runTester } from "./agents/tester.js";
 import { runReviewer } from "./agents/reviewer.js";
@@ -39,58 +42,111 @@ app.get("/health", (_, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-async function loadIssueAndContext({ jira, issueKey, targetFallback }) {
-  const resolvedRepoPath = await resolveTargetRepoPath("", targetFallback);
-  const [issue, context] = await Promise.all([
-    jira.getIssue(issueKey),
-    buildProjectContext(resolvedRepoPath),
-  ]);
+async function resolveRepoPath({ targetRepoPath, targetFallback }) {
+  return resolveTargetRepoPath(targetRepoPath || "", targetFallback);
+}
+
+async function loadIssueAndRepoPath({ jira, issueKey, targetRepoPath, targetFallback }) {
+  const resolvedRepoPath = await resolveRepoPath({ targetRepoPath, targetFallback });
+  const issue = await jira.getIssue(issueKey);
+  return { issue, resolvedRepoPath };
+}
+
+async function loadIssueAndContext({ jira, issueKey, targetRepoPath, targetFallback }) {
+  const { issue, resolvedRepoPath } = await loadIssueAndRepoPath({
+    jira,
+    issueKey,
+    targetRepoPath,
+    targetFallback,
+  });
+  const context = await buildProjectContext(resolvedRepoPath);
   return { issue, context, resolvedRepoPath };
 }
 
+app.post("/pipeline/learn-architect-context", async (req, res) => {
+  try {
+    const { targetRepoPath, forceRegenerate = false } = req.body || {};
+    const config = envConfig();
+    const deps = createDependencies(config);
+    const resolvedRepoPath = await resolveRepoPath({
+      targetRepoPath,
+      targetFallback: config.targetProjectPathFallback,
+    });
+
+    const memoryResult = await ensureArchitectMemory({
+      llm: deps.llm,
+      targetRepoPath: resolvedRepoPath,
+      forceRegenerate: Boolean(forceRegenerate),
+    });
+
+    res.status(200).json({
+      targetRepoPath: resolvedRepoPath,
+      architectMemoryPath: memoryResult.architectMemoryPath,
+      architectMemoryGenerated: memoryResult.architectMemoryGenerated,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/pipeline/create-subtasks", async (req, res) => {
   try {
-    const { issueKey } = req.body || {};
+    const { issueKey, targetRepoPath } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
 
     const config = envConfig();
     const deps = createDependencies(config);
-    const { issue, context, resolvedRepoPath } = await loadIssueAndContext({
+    const { issue, resolvedRepoPath } = await loadIssueAndRepoPath({
       jira: deps.jira,
       issueKey,
+      targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
     });
 
-    const architectResult = await runArchitect({
+    const memoryResult = await ensureArchitectMemory({
       llm: deps.llm,
-      issue,
-      context,
+      targetRepoPath: resolvedRepoPath,
     });
 
-    const createdSubtasks = [];
-    for (const subtask of architectResult.subtasks) {
-      const created = await deps.jira.createSubtask(issue.key, subtask.title, subtask.body);
-      createdSubtasks.push({ key: created.key, title: subtask.title, body: subtask.body });
-    }
+    const architectResult = await createArchitectSubtasks({
+      llm: deps.llm,
+      jira: deps.jira,
+      issue,
+      architectMemory: memoryResult.architectMemory,
+      jiraSubtaskTargetStatus: config.jiraSubtaskTargetStatus,
+    });
 
     await saveRunState(config.runStateDir, issue.key, {
       issueKey: issue.key,
       targetRepoPath: resolvedRepoPath,
       architect: architectResult,
-      subtasks: createdSubtasks,
+      architectMemory: {
+        path: memoryResult.architectMemoryPath,
+        generated: memoryResult.architectMemoryGenerated,
+      },
+      subtasks: architectResult.createdSubtasks,
       updatedAt: new Date().toISOString(),
     });
 
     await deps.jira.addComment(
       issue.key,
-      `Architect created ${createdSubtasks.length} subtasks for ${issue.key}.\nTarget repo: ${resolvedRepoPath}`
+      [
+        `Architect created ${architectResult.createdSubtasks.length} subtasks for ${issue.key}.`,
+        `Target repo: ${resolvedRepoPath}`,
+        `Architect memory: ${memoryResult.architectMemoryPath} (${memoryResult.architectMemoryGenerated ? "created" : "reused"})`,
+        config.jiraSubtaskTargetStatus
+          ? `Subtasks moved to status: ${config.jiraSubtaskTargetStatus}`
+          : "Subtasks left in Jira default status.",
+      ].join("\n")
     );
 
     res.status(200).json({
       issueKey: issue.key,
       targetRepoPath: resolvedRepoPath,
+      architectMemoryPath: memoryResult.architectMemoryPath,
+      architectMemoryGenerated: memoryResult.architectMemoryGenerated,
       summary: architectResult.summary,
-      subtasks: createdSubtasks,
+      subtasks: architectResult.createdSubtasks,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -99,7 +155,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
 
 app.post("/pipeline/run-developer", async (req, res) => {
   try {
-    const { issueKey, subtaskKey } = req.body || {};
+    const { issueKey, subtaskKey, targetRepoPath } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
     if (!subtaskKey) return jsonError(res, 400, "subtaskKey is required");
 
@@ -108,6 +164,7 @@ app.post("/pipeline/run-developer", async (req, res) => {
     const { issue, context, resolvedRepoPath } = await loadIssueAndContext({
       jira: deps.jira,
       issueKey,
+      targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
     });
 
@@ -152,7 +209,7 @@ app.post("/pipeline/run-developer", async (req, res) => {
 
 app.post("/pipeline/run-tester", async (req, res) => {
   try {
-    const { issueKey, diff } = req.body || {};
+    const { issueKey, diff, targetRepoPath } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
     if (!diff) return jsonError(res, 400, "diff is required");
 
@@ -161,6 +218,7 @@ app.post("/pipeline/run-tester", async (req, res) => {
     const { context, resolvedRepoPath } = await loadIssueAndContext({
       jira: deps.jira,
       issueKey,
+      targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
     });
 
@@ -197,13 +255,16 @@ app.post("/pipeline/run-tester", async (req, res) => {
 
 app.post("/pipeline/run-reviewer", async (req, res) => {
   try {
-    const { issueKey, diff } = req.body || {};
+    const { issueKey, diff, targetRepoPath } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
     if (!diff) return jsonError(res, 400, "diff is required");
 
     const config = envConfig();
     const deps = createDependencies(config);
-    const resolvedRepoPath = await resolveTargetRepoPath("", config.targetProjectPathFallback);
+    const resolvedRepoPath = await resolveRepoPath({
+      targetRepoPath,
+      targetFallback: config.targetProjectPathFallback,
+    });
     const runState = await loadRunState(config.runStateDir, issueKey);
     const testerReport = runState?.tester || {};
 

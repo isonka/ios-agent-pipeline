@@ -4,6 +4,15 @@ import path from "path";
 const MAX_MD_FILES = 24;
 const MAX_FILE_CHARS = 5000;
 
+function priorityScore(relativePath) {
+  const normalized = relativePath.toLowerCase();
+  if (normalized.endsWith("readme.md")) return -30;
+  if (normalized.endsWith("claude.md")) return -20;
+  if (normalized.endsWith("skill.md")) return -10;
+  if (normalized.includes("/skills/")) return -8;
+  return 0;
+}
+
 async function walkMarkdownFiles(rootDir, relativeDir = "") {
   const absoluteDir = path.join(rootDir, relativeDir);
   const entries = await fs.readdir(absoluteDir, { withFileTypes: true });
@@ -33,11 +42,7 @@ export async function buildProjectContext(targetRepoPath) {
   const allMdFiles = await walkMarkdownFiles(targetRepoPath);
   const prioritized = allMdFiles
     .sort((a, b) => a.localeCompare(b))
-    .sort((a, b) => {
-      const aScore = a.toLowerCase().includes("readme") ? -1 : 0;
-      const bScore = b.toLowerCase().includes("readme") ? -1 : 0;
-      return aScore - bScore;
-    })
+    .sort((a, b) => priorityScore(a) - priorityScore(b))
     .slice(0, MAX_MD_FILES);
 
   const docs = [];

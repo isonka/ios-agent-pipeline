@@ -45,16 +45,38 @@ Body:
 
 ```json
 {
-  "issueKey": "IOS-123"
+  "issueKey": "IOS-123",
+  "targetRepoPath": "/absolute/path/to/target/repo"
 }
 ```
+
+Notes:
+- `targetRepoPath` is optional; when omitted, `TARGET_PROJECT_PATH` from `.env` is used.
 
 Behavior:
 - Loads Jira issue.
 - Reads markdown docs from target repo.
-- Architect agent generates subtask contracts.
+- Architect agent builds and stores reusable project memory in `.ios-agent/architect-context.json` (first run).
+- Architect agent reuses memory and generates subtask contracts.
 - Creates Jira subtasks.
+- Optionally moves created subtasks to `JIRA_SUBTASK_TARGET_STATUS`.
 - Saves run artifacts in `.data/pipeline-runs/<issue>.json`.
+
+### `POST /pipeline/learn-architect-context`
+
+Body:
+
+```json
+{
+  "targetRepoPath": "/absolute/path/to/target/repo",
+  "forceRegenerate": false
+}
+```
+
+Behavior:
+- Creates architect project memory if it does not exist.
+- Reuses existing memory by default.
+- If `forceRegenerate=true`, rebuilds memory from docs.
 
 ### `POST /pipeline/run-developer`
 
@@ -63,7 +85,8 @@ Body:
 ```json
 {
   "issueKey": "IOS-123",
-  "subtaskKey": "IOS-124"
+  "subtaskKey": "IOS-124",
+  "targetRepoPath": "/absolute/path/to/target/repo"
 }
 ```
 
@@ -79,7 +102,8 @@ Body:
 ```json
 {
   "issueKey": "IOS-123",
-  "diff": "unified diff text"
+  "diff": "unified diff text",
+  "targetRepoPath": "/absolute/path/to/target/repo"
 }
 ```
 
@@ -93,7 +117,8 @@ Body:
 ```json
 {
   "issueKey": "IOS-123",
-  "diff": "unified diff text"
+  "diff": "unified diff text",
+  "targetRepoPath": "/absolute/path/to/target/repo"
 }
 ```
 
@@ -104,3 +129,4 @@ Behavior:
 
 - Only AWS Bedrock Claude is supported (`LLM_PROVIDER=bedrock`).
 - `TARGET_PROJECT_PATH` must point to a readable git repo root.
+- Set `JIRA_SUBTASK_TARGET_STATUS` to automatically move new subtasks to a specific Jira status/column.
