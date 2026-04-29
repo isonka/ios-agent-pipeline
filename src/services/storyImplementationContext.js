@@ -27,6 +27,7 @@ const SKIP_DIRECTORIES = new Set([
 
 const MAX_FILES_SCANNED = 1800;
 const MAX_MATCHES = 20;
+const MAX_HINTED_ROOT_MATCHES = 12;
 const MAX_SKILL_DOCS = 12;
 const MAX_SNIPPET_CHARS = 320;
 
@@ -89,6 +90,26 @@ function extractHintedRoots(issue, targetRepoPath) {
   return unique(roots);
 }
 
+function isUnderHintedRoot(relPath, hintedRootsRel) {
+  return hintedRootsRel.some((root) => relPath === root || relPath.startsWith(`${root}/`));
+}
+
+function isHintedMigrationCandidate(relPath) {
+  const lower = relPath.toLowerCase();
+  if (!lower.endsWith(".swift")) return false;
+  return (
+    lower.includes("view") ||
+    lower.includes("controller") ||
+    lower.includes("cell") ||
+    lower.includes("state") ||
+    lower.includes("converter") ||
+    lower.includes("adapter") ||
+    lower.includes("router") ||
+    lower.includes("scenebuilder") ||
+    lower.includes("feature")
+  );
+}
+
 function shouldSkipDir(name) {
   return SKIP_DIRECTORIES.has(name);
 }
@@ -126,10 +147,12 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
   }
 
   const hintedRoots = extractHintedRoots(issue, targetRepoPath);
+  const hintedRootsRel = hintedRoots.map((root) => normalizedRelPath(targetRepoPath, root));
   const queue = [...hintedRoots, targetRepoPath];
   const visitedDirs = new Set();
   let filesScanned = 0;
   const matches = [];
+  let hintedRootMatches = 0;
   const skillDocs = [];
 
   while (queue.length && filesScanned < MAX_FILES_SCANNED) {
@@ -158,6 +181,21 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
       const absolutePath = path.join(currentDir, entry.name);
       const relPath = normalizedRelPath(targetRepoPath, absolutePath);
       const pathLower = relPath.toLowerCase();
+
+      if (
+        hintedRootMatches < MAX_HINTED_ROOT_MATCHES &&
+        isUnderHintedRoot(relPath, hintedRootsRel) &&
+        isHintedMigrationCandidate(relPath)
+      ) {
+        matches.push({
+          path: relPath,
+          reason: "path under Jira hinted root",
+          snippet: "",
+        });
+        hintedRootMatches += 1;
+        if (matches.length >= MAX_MATCHES) break;
+        continue;
+      }
 
       const matchedKeywordInPath = keywords.find((keyword) => pathLower.includes(keyword.toLowerCase()));
       if (matchedKeywordInPath) {
@@ -193,6 +231,6 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
     filesScanned,
     matches,
     skillDocs,
-    hintedRoots: hintedRoots.map((root) => normalizedRelPath(targetRepoPath, root)),
+    hintedRoots: hintedRootsRel,
   };
 }

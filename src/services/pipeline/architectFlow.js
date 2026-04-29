@@ -69,8 +69,12 @@ export async function createArchitectSubtasks({
   const architectResult = isUIKitToSwiftUIMigrationStory(issue)
     ? (() => {
         if (!resolvedModule.primary || resolvedModule.confidence === "low") {
+          const topCandidates = (resolvedModule.ranked || [])
+            .slice(0, 3)
+            .map((item) => `${item.moduleName}:${item.score}`)
+            .join(", ");
           throw new Error(
-            `Low confidence module resolution for UIKit->SwiftUI story. ${resolvedModule.reason}`
+            `Low confidence module resolution for UIKit->SwiftUI story. ${resolvedModule.reason} Top candidates: ${topCandidates || "none"}`
           );
         }
         return buildUIKitToSwiftUISubtasks(issue, implementationContext, resolvedModule);

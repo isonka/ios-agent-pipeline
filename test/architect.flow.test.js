@@ -482,3 +482,97 @@ test("deterministic planner fails when hinted module has no evidence", async () 
     /Low confidence module resolution/
   );
 });
+
+test("deterministic planner seeds evidence from hinted root path", async () => {
+  const repoPath = await makeTempRepo();
+  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
+
+  await fs.mkdir(path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features"), {
+    recursive: true,
+  });
+  await fs.mkdir(path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore"), {
+    recursive: true,
+  });
+  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
+
+  await fs.writeFile(
+    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "BundlesViewController.swift"),
+    "import UIKit\nfinal class BundlesViewController: UIViewController {}\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "BundlesFeatureState.swift"),
+    "import Foundation\nstruct BundlesFeatureState {}\n",
+    "utf8"
+  );
+  for (let index = 0; index < 20; index += 1) {
+    await fs.writeFile(
+      path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore", `Noise${index}.swift`),
+      `// discover packages migrate uikit swiftui noise ${index}\n`,
+      "utf8"
+    );
+  }
+  await fs.writeFile(
+    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
+    "# skill\n",
+    "utf8"
+  );
+
+  await saveArchitectMemory(repoPath, {
+    generatedAt: new Date().toISOString(),
+    sourceDocuments: ["README.md"],
+    content: {
+      projectOverview: "Overview",
+      architecture: "Architecture",
+      iosConventions: ["Swift"],
+      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
+      deliveryGuidance: "Guidance",
+      knownRisks: [],
+    },
+  });
+
+  const llm = {
+    async generateText() {
+      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
+    },
+  };
+
+  const jira = {
+    created: [],
+    async createSubtask(parentKey, title, body) {
+      const key = `${parentKey}-${this.created.length + 1}`;
+      this.created.push({ key, title, body });
+      return { key };
+    },
+    async transitionIssueToStatus() {},
+  };
+
+  const issue = {
+    key: "IOS-402",
+    fields: {
+      summary: "Discover Packages - Migrate UIKit to SwiftUI",
+      description:
+        "Discover packages is located in TargetShared/Sources/TargetShared/SMB/ Migrate UIKit elements.",
+    },
+  };
+
+  const result = await createArchitectSubtasks({
+    llm,
+    jira,
+    issue,
+    targetRepoPath: repoPath,
+    architectMemory: {
+      projectOverview: "Overview",
+      architecture: "Architecture",
+      iosConventions: ["Swift"],
+      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
+      deliveryGuidance: "Guidance",
+      knownRisks: [],
+    },
+    architectMemoryPath: ".ios-agent/architect-context.json",
+    jiraSubtaskTargetStatus: "",
+  });
+
+  assert.equal(result.moduleResolution.primaryModule, "TargetShared/SMB");
+  assert.ok(result.createdSubtasks.length > 0);
+});
