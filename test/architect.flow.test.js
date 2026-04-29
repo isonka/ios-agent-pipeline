@@ -295,3 +295,103 @@ test("createArchitectSubtasks uses deterministic planning for UIKit to SwiftUI s
     true
   );
 });
+
+test("deterministic planner respects TargetShared module hint from Jira description", async () => {
+  const repoPath = await makeTempRepo();
+  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
+
+  await fs.mkdir(path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features"), {
+    recursive: true,
+  });
+  await fs.mkdir(path.join(repoPath, "TargetShared", "Tests", "TargetSharedTests", "ASQ"), {
+    recursive: true,
+  });
+  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
+
+  await fs.writeFile(
+    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "SmbBundlesViewController.swift"),
+    "import UIKit\nfinal class SmbBundlesViewController: UIViewController {}\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "SmbBundlesViewStateConverter.swift"),
+    "import Foundation\nstruct SmbBundlesViewStateConverter {}\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "SmbBundlesView.swift"),
+    "import SwiftUI\nstruct SmbBundlesView: View { var body: some View { Text(\"Discover packages\") } }\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(repoPath, "TargetShared", "Tests", "TargetSharedTests", "ASQ", "AsqDismissState_ReducerTests.swift"),
+    "// discover packages unrelated test\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
+    "# skill\n",
+    "utf8"
+  );
+
+  await saveArchitectMemory(repoPath, {
+    generatedAt: new Date().toISOString(),
+    sourceDocuments: ["README.md"],
+    content: {
+      projectOverview: "Overview",
+      architecture: "Architecture",
+      iosConventions: ["Swift"],
+      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
+      deliveryGuidance: "Guidance",
+      knownRisks: [],
+    },
+  });
+
+  const llm = {
+    async generateText() {
+      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
+    },
+  };
+
+  const jira = {
+    created: [],
+    async createSubtask(parentKey, title, body) {
+      const key = `${parentKey}-${this.created.length + 1}`;
+      this.created.push({ key, title, body });
+      return { key };
+    },
+    async transitionIssueToStatus() {},
+  };
+
+  const issue = {
+    key: "IOS-400",
+    fields: {
+      summary: "[iOS] Discover Packages - Migrate UIKit to SwiftUI",
+      description: "Discover packages is located in TargetShared/SMB/ migrate UIKit elements to SwiftUI.",
+    },
+  };
+
+  const result = await createArchitectSubtasks({
+    llm,
+    jira,
+    issue,
+    targetRepoPath: repoPath,
+    architectMemory: {
+      projectOverview: "Overview",
+      architecture: "Architecture",
+      iosConventions: ["Swift"],
+      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
+      deliveryGuidance: "Guidance",
+      knownRisks: [],
+    },
+    architectMemoryPath: ".ios-agent/architect-context.json",
+    jiraSubtaskTargetStatus: "",
+  });
+
+  assert.equal(result.moduleResolution.primaryModule, "TargetShared/SMB");
+  assert.ok(
+    result.createdSubtasks
+      .flatMap((subtask) => subtask.changedFiles || [])
+      .every((filePath) => filePath.includes("TargetShared/Sources/TargetShared/SMB"))
+  );
+});

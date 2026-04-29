@@ -8,25 +8,33 @@ function selectPaths(matches, predicate) {
   return uniquePaths(matches.map((item) => item.path).filter((path) => predicate(path)));
 }
 
+function isTestPath(path) {
+  return path.includes("/Tests/") || path.includes("SnapshotTests");
+}
+
 export function buildUIKitToSwiftUISubtasks(issue, implementationContext, resolvedModule) {
   const matches = resolvedModule.primary.matches;
   const allPaths = uniquePaths(matches.map((item) => item.path));
   const uikitIntegrationPaths = selectPaths(
     matches,
     (path) =>
-      path.includes("ViewController") ||
-      path.includes("SceneBuilder") ||
-      path.includes("Adapter") ||
-      path.includes("Router") ||
-      path.includes("Cell")
+      !isTestPath(path) &&
+      (path.includes("ViewController") ||
+        path.includes("SceneBuilder") ||
+        path.includes("Adapter") ||
+        path.includes("Router") ||
+        path.includes("Cell"))
   );
   const stateFiles = selectPaths(
     matches,
-    (path) => path.includes("ViewState") || path.includes("State") || path.includes("Item") || path.includes("Converter")
+    (path) =>
+      !isTestPath(path) &&
+      (path.includes("ViewState") || path.includes("State") || path.includes("Item") || path.includes("Converter"))
   );
   const swiftUIViewPaths = selectPaths(
     matches,
     (path) =>
+      !isTestPath(path) &&
       path.includes("/View/") &&
       path.endsWith(".swift") &&
       !path.includes("ViewController") &&

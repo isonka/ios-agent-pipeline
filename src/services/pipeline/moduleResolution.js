@@ -5,6 +5,13 @@ function issueText(issue) {
   return `${summary} ${descriptionText}`.toLowerCase();
 }
 
+function issueRawText(issue) {
+  const summary = String(issue?.fields?.summary || "");
+  const description = issue?.fields?.description;
+  const descriptionText = typeof description === "string" ? description : JSON.stringify(description || {});
+  return `${summary} ${descriptionText}`;
+}
+
 export function issueSummary(issue) {
   return String(issue?.fields?.summary || "").trim();
 }
@@ -42,12 +49,34 @@ function extractAnchorTokens(issue) {
 function moduleBucket(path) {
   const parts = String(path || "").split("/");
   if (parts[0] === "Modules" && parts[1]) return `Modules/${parts[1]}`;
+  if (parts[0] === "TargetShared" && parts[1] === "Tests" && parts[2] === "TargetShared" && parts[3]) {
+    return `TargetShared/${parts[3]}`;
+  }
   if (parts[0] === "TargetShared" && parts[1] === "Sources" && parts[2] === "TargetShared" && parts[3]) {
     return `TargetShared/${parts[3]}`;
   }
   if (parts[0] === "TargetShared") return "TargetShared";
   if (parts[0]) return parts[0];
   return "unknown";
+}
+
+function extractHintedModules(issue) {
+  const raw = issueRawText(issue);
+  const pathHints = raw.match(/\b(?:TargetShared|Modules)\/[A-Za-z0-9_\-./ ]+/g) || [];
+  const hintedModules = [];
+
+  for (const rawHint of pathHints) {
+    const hint = rawHint.replace(/[,.;:)\]]+$/, "").replace(/\/+$/, "");
+    const parts = hint.split("/").filter(Boolean);
+    if (parts[0] === "Modules" && parts[1]) hintedModules.push(`Modules/${parts[1]}`);
+    if (parts[0] === "TargetShared" && parts[1] === "Sources" && parts[2] === "TargetShared" && parts[3]) {
+      hintedModules.push(`TargetShared/${parts[3]}`);
+    }
+    if (parts[0] === "TargetShared" && parts[1] && parts[1] !== "Sources" && parts[1] !== "Tests") {
+      hintedModules.push(`TargetShared/${parts[1]}`);
+    }
+  }
+  return uniqueValues(hintedModules);
 }
 
 function scoreMatch(match, anchorTokens) {
@@ -72,6 +101,7 @@ function scoreMatch(match, anchorTokens) {
 export function resolvePrimaryModule(issue, implementationContext) {
   const matches = implementationContext.matches || [];
   const anchorTokens = extractAnchorTokens(issue);
+  const hintedModules = extractHintedModules(issue);
   const moduleScores = new Map();
 
   for (const match of matches) {
@@ -86,6 +116,18 @@ export function resolvePrimaryModule(issue, implementationContext) {
   const ranked = [...moduleScores.entries()]
     .map(([moduleName, data]) => ({ moduleName, score: data.score, matches: data.matches }))
     .sort((a, b) => b.score - a.score);
+
+  if (hintedModules.length > 0) {
+    const hinted = ranked.find((entry) => hintedModules.includes(entry.moduleName));
+    if (hinted) {
+      return {
+        confidence: "high",
+        reason: `Used module hint from Jira description: '${hinted.moduleName}'.`,
+        primary: hinted,
+        ranked,
+      };
+    }
+  }
 
   const best = ranked[0];
   const second = ranked[1];
