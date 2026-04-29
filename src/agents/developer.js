@@ -13,7 +13,7 @@ export async function runDeveloper({ llm, issue, subtaskKey, subtaskSummary, con
   const text = await llm.generateText({
     systemPrompt: "You are a Senior iOS Developer agent. Output only valid JSON.",
     userPrompt: buildDeveloperPrompt({ issue, subtaskKey, subtaskSummary, context }),
-    temperature: 0.1,
+    temperature: 0,
   });
 
   return JSON.parse(text);

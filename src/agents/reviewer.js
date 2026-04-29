@@ -14,7 +14,7 @@ export async function runReviewer({ llm, issueKey, diff, testerReport }) {
   const text = await llm.generateText({
     systemPrompt: "You are a strict iOS Code Reviewer agent. Output only valid JSON.",
     userPrompt: buildReviewerPrompt({ issueKey, diff, testerReport }),
-    temperature: 0.1,
+    temperature: 0,
   });
   return JSON.parse(text);
 }

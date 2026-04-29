@@ -405,3 +405,80 @@ test("deterministic planner respects TargetShared module hint from Jira descript
       .every((filePath) => filePath.includes("TargetShared/Sources/TargetShared/SMB"))
   );
 });
+
+test("deterministic planner fails when hinted module has no evidence", async () => {
+  const repoPath = await makeTempRepo();
+  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
+  await fs.mkdir(path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore"), {
+    recursive: true,
+  });
+  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
+
+  for (let index = 0; index < 10; index += 1) {
+    await fs.writeFile(
+      path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore", `Noise${index}.swift`),
+      `// Discover packages migrate UIKit to SwiftUI noise ${index}\n`,
+      "utf8"
+    );
+  }
+  await fs.writeFile(
+    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
+    "# skill\n",
+    "utf8"
+  );
+
+  await saveArchitectMemory(repoPath, {
+    generatedAt: new Date().toISOString(),
+    sourceDocuments: ["README.md"],
+    content: {
+      projectOverview: "Overview",
+      architecture: "Architecture",
+      iosConventions: ["Swift"],
+      keyComponents: [{ name: "Core", responsibility: "Common platform code" }],
+      deliveryGuidance: "Guidance",
+      knownRisks: [],
+    },
+  });
+
+  const llm = {
+    async generateText() {
+      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
+    },
+  };
+
+  const jira = {
+    async createSubtask() {
+      throw new Error("Subtasks should not be created on low-confidence module resolution");
+    },
+    async transitionIssueToStatus() {},
+  };
+
+  const issue = {
+    key: "IOS-401",
+    fields: {
+      summary: "[iOS] Discover Packages - Migrate UIKit to SwiftUI",
+      description: "Discover packages is located in TargetShared/Sources/TargetShared/SMB/.",
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      createArchitectSubtasks({
+        llm,
+        jira,
+        issue,
+        targetRepoPath: repoPath,
+        architectMemory: {
+          projectOverview: "Overview",
+          architecture: "Architecture",
+          iosConventions: ["Swift"],
+          keyComponents: [{ name: "Core", responsibility: "Common platform code" }],
+          deliveryGuidance: "Guidance",
+          knownRisks: [],
+        },
+        architectMemoryPath: ".ios-agent/architect-context.json",
+        jiraSubtaskTargetStatus: "",
+      }),
+    /Low confidence module resolution/
+  );
+});

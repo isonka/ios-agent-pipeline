@@ -75,7 +75,7 @@ async function generateJsonWithRepair({
   const firstText = await llm.generateText({
     systemPrompt: ARCHITECT_SYSTEM_PROMPT,
     userPrompt,
-    temperature: 0.1,
+    temperature: 0,
   });
 
   try {

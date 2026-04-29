@@ -127,6 +127,12 @@ export function resolvePrimaryModule(issue, implementationContext) {
         ranked,
       };
     }
+    return {
+      confidence: "low",
+      reason: `Jira description hinted module(s) ${hintedModules.join(", ")} but no implementation evidence matched those modules.`,
+      primary: null,
+      ranked,
+    };
   }
 
   const best = ranked[0];

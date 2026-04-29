@@ -14,7 +14,7 @@ export async function runTester({ llm, issueKey, diff, context }) {
   const text = await llm.generateText({
     systemPrompt: "You are an iOS Tester agent. Output only valid JSON.",
     userPrompt: buildTesterPrompt({ issueKey, diff, context }),
-    temperature: 0.1,
+    temperature: 0,
   });
   return JSON.parse(text);
 }

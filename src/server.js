@@ -26,6 +26,7 @@ function createDependencies(config) {
     region: config.bedrockRegion,
     modelId: config.bedrockModelId,
     maxTokens: config.llmMaxTokens,
+    temperature: 0,
   });
 
   const jira = new JiraClient({
