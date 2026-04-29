@@ -1,19 +1,12 @@
 function buildReviewerPrompt({ issueKey, diff, testerReport }) {
   return [
-    `Issue: ${issueKey}`,
-    "",
-    "Diff:",
+    `ISSUE ${issueKey}`,
+    "DIFF",
     diff,
-    "",
-    "Tester report:",
+    "TEST",
     JSON.stringify(testerReport, null, 2),
-    "",
-    "Return JSON with schema:",
-    "{",
-    '  "verdict": "APPROVE|REQUEST_CHANGES",',
-    '  "summary": "short review summary",',
-    '  "requiredChanges": ["..."]',
-    "}",
+    'SCHEMA {"verdict":"APPROVE|REQUEST_CHANGES","summary":"short review summary","requiredChanges":["..."]}',
+    "JSON only.",
   ].join("\n");
 }
 

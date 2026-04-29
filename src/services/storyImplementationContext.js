@@ -27,6 +27,7 @@ const SKIP_DIRECTORIES = new Set([
 
 const MAX_FILES_SCANNED = 1800;
 const MAX_MATCHES = 20;
+const MAX_SKILL_DOCS = 12;
 const MAX_SNIPPET_CHARS = 320;
 
 function unique(values) {
@@ -75,6 +76,10 @@ function shouldInspectFile(fileName) {
   return SOURCE_EXTENSIONS.has(path.extname(fileName).toLowerCase());
 }
 
+function isSkillDoc(fileName) {
+  return fileName.toLowerCase().includes("skill") && fileName.toLowerCase().endsWith(".md");
+}
+
 function normalizedRelPath(root, absolutePath) {
   return path.relative(root, absolutePath).split(path.sep).join("/");
 }
@@ -102,8 +107,9 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
   const queue = [targetRepoPath];
   let filesScanned = 0;
   const matches = [];
+  const skillDocs = [];
 
-  while (queue.length && filesScanned < MAX_FILES_SCANNED && matches.length < MAX_MATCHES) {
+  while (queue.length && filesScanned < MAX_FILES_SCANNED) {
     const currentDir = queue.shift();
     const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => []);
 
@@ -115,7 +121,12 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
         continue;
       }
 
-      if (!entry.isFile() || !shouldInspectFile(entry.name)) continue;
+      if (!entry.isFile()) continue;
+      if (isSkillDoc(entry.name) && skillDocs.length < MAX_SKILL_DOCS) {
+        const skillPath = normalizedRelPath(targetRepoPath, path.join(currentDir, entry.name));
+        skillDocs.push(skillPath);
+      }
+      if (!shouldInspectFile(entry.name)) continue;
       filesScanned += 1;
 
       const absolutePath = path.join(currentDir, entry.name);
@@ -155,5 +166,6 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
     keywords,
     filesScanned,
     matches,
+    skillDocs,
   };
 }

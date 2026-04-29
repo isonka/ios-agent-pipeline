@@ -48,6 +48,19 @@ function mergeImplementationSignals(existingMemoryContent, implementationContext
   };
 }
 
+function formatSubtaskDescription(subtask) {
+  const changedFilesLines = (subtask.changedFiles || []).map((filePath) => `- ${filePath}`);
+  const skillLine = subtask.suggestedSkill ? subtask.suggestedSkill : "none";
+  return [
+    subtask.body,
+    "",
+    `Story points: ${subtask.storyPoints}`,
+    "Changed files:",
+    ...changedFilesLines,
+    `Suggested skill: ${skillLine}`,
+  ].join("\n");
+}
+
 export async function ensureArchitectMemory({
   llm,
   targetRepoPath,
@@ -96,6 +109,11 @@ export async function createArchitectSubtasks({
     targetRepoPath,
     issue,
   });
+  if (!Array.isArray(implementationContext.matches) || implementationContext.matches.length === 0) {
+    throw new Error(
+      "Architect could not map this story to concrete implementation files. Refine issue summary/description and retry."
+    );
+  }
 
   const architectResult = await runArchitect({
     llm,
@@ -128,11 +146,19 @@ export async function createArchitectSubtasks({
 
   const createdSubtasks = [];
   for (const subtask of architectResult.subtasks) {
-    const created = await jira.createSubtask(issue.key, subtask.title, subtask.body);
+    const description = formatSubtaskDescription(subtask);
+    const created = await jira.createSubtask(issue.key, subtask.title, description);
     if (jiraSubtaskTargetStatus) {
       await jira.transitionIssueToStatus(created.key, jiraSubtaskTargetStatus);
     }
-    createdSubtasks.push({ key: created.key, title: subtask.title, body: subtask.body });
+    createdSubtasks.push({
+      key: created.key,
+      title: subtask.title,
+      body: subtask.body,
+      storyPoints: subtask.storyPoints,
+      changedFiles: subtask.changedFiles,
+      suggestedSkill: subtask.suggestedSkill,
+    });
   }
 
   return {

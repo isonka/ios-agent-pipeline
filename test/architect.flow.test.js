@@ -65,6 +65,12 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
     "import SwiftUI\nstruct DiscoverPackagesView { let title = \"Discover Packages\" }\n",
     "utf8"
   );
+  await fs.mkdir(path.join(repoPath, "skills", "swiftui-migration"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "skills", "swiftui-migration", "SKILL.md"),
+    "# SwiftUI migration skill\n",
+    "utf8"
+  );
 
   await saveArchitectMemory(repoPath, {
     generatedAt: new Date().toISOString(),
@@ -79,18 +85,47 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
     },
   });
 
+  let llmCalls = 0;
   const llm = {
     async generateText() {
+      llmCalls += 1;
+      if (llmCalls === 1) {
+        return JSON.stringify({
+          summary: "Subtasks based on real implementation evidence.",
+          subtasks: [
+            {
+              title: "Validate Discover Packages ownership",
+              body: "Find true ownership and keep scope minimal.",
+              storyPoints: 1,
+              changedFiles: ["DiscoverPackagesView.swift"],
+              suggestedSkill: null,
+            },
+            {
+              title: "Implement scoped migration",
+              body: "Ship in verifiable increments.",
+              storyPoints: 2,
+              changedFiles: ["DiscoverPackagesView.swift"],
+              suggestedSkill: null,
+            },
+          ],
+        });
+      }
       return JSON.stringify({
-        summary: "Subtasks based on real implementation evidence.",
+        summary: "Subtasks based on completed architect discovery.",
         subtasks: [
           {
-            title: "Validate Discover Packages ownership",
-            body: "Find true ownership and keep scope minimal.",
+            title: "Migrate Discover Packages navigation wiring",
+            body: "Move flow entry points to target navigator adapter with acceptance criteria.",
+            storyPoints: 3,
+            changedFiles: ["DiscoverPackagesView.swift"],
+            suggestedSkill: "skills/swiftui-migration/SKILL.md",
           },
           {
-            title: "Implement scoped migration",
-            body: "Ship in verifiable increments.",
+            title: "Add regression coverage for Discover Packages flow",
+            body: "Add tests for migrated flow and keep parity with previous behavior.",
+            storyPoints: 2,
+            changedFiles: ["DiscoverPackagesView.swift"],
+            suggestedSkill: null,
           },
         ],
       });
@@ -136,12 +171,18 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
   });
 
   assert.equal(result.createdSubtasks.length, 2);
+  assert.equal(llmCalls, 2);
   assert.equal(jira.transitioned.length, 2);
+  assert.equal(result.createdSubtasks[0].storyPoints, 3);
+  assert.deepEqual(result.createdSubtasks[0].changedFiles, ["DiscoverPackagesView.swift"]);
   assert.equal(result.architectMemoryUpdated, true);
   assert.ok(result.architectMemoryAddedSignals > 0);
   assert.ok(result.implementationContext.matches.length > 0);
+  assert.ok(result.implementationContext.skillDocs.includes("skills/swiftui-migration/SKILL.md"));
 
   const updatedMemory = await loadArchitectMemory(repoPath);
   assert.ok(Array.isArray(updatedMemory.content.implementationSignals));
   assert.ok(updatedMemory.content.implementationSignals.length > 0);
+  assert.match(jira.created[0].body, /Story points: 3/);
+  assert.match(jira.created[0].body, /Changed files:/);
 });

@@ -1,51 +1,88 @@
 const ARCHITECT_SYSTEM_PROMPT = "You are an iOS Architect agent. Output only valid JSON.";
+const MEMORY_SCHEMA =
+  '{"projectOverview":"string","architecture":"string","iosConventions":["string"],"keyComponents":[{"name":"string","responsibility":"string"}],"deliveryGuidance":"string","knownRisks":["string"]}';
+const SUBTASK_SCHEMA =
+  '{"summary":"string","subtasks":[{"title":"string","body":"string with acceptance criteria","storyPoints":1,"changedFiles":["path/from/evidence"],"suggestedSkill":"path/to/SKILL.md or null"}]}';
+
+function j(value) {
+  return JSON.stringify(value);
+}
 
 function buildArchitectMemoryPrompt(context) {
   return [
-    "You are preparing reusable project memory for future iOS delivery tasks.",
-    "Study the provided docs and return JSON only.",
-    "",
-    "Project docs:",
+    "Make project memory.",
+    "Use docs.",
+    "JSON only.",
+    "DOCS",
     ...context.docs.map((doc) => `--- ${doc.path}\n${doc.content}`),
-    "",
-    "Return JSON with schema:",
-    "{",
-    '  "projectOverview": "high-level purpose and scope",',
-    '  "architecture": "important architecture and module boundaries",',
-    '  "iosConventions": ["coding, testing, tooling conventions"],',
-    '  "keyComponents": [',
-    '    { "name": "component/module", "responsibility": "what it owns" }',
-    "  ],",
-    '  "deliveryGuidance": "how architect should split stories for developer agent",',
-    '  "knownRisks": ["risk items architect should watch"]',
-    "}",
+    `SCHEMA ${MEMORY_SCHEMA}`,
   ].join("\n");
 }
 
 function buildArchitectPrompt(issue, architectMemory, implementationContext) {
+  const evidencePaths = (implementationContext?.matches || []).map((match) => match.path);
+  const skillDocs = implementationContext?.skillDocs || [];
   return [
-    `Jira issue: ${issue.key} - ${issue.fields?.summary || ""}`,
-    "",
-    "Reusable project memory:",
-    JSON.stringify(architectMemory, null, 2),
-    "",
-    "Implementation evidence from the actual repo structure/code:",
-    JSON.stringify(implementationContext, null, 2),
-    "",
-    "Important constraints:",
-    "- Do not assume anything is a standalone module unless evidence confirms it.",
-    "- Use implementation evidence first, then memory context.",
-    "- If evidence is weak, create a first subtask to locate/verify ownership before migration or refactor tasks.",
-    "",
-    "Return JSON with schema:",
-    "{",
-    '  "summary": "short architecture summary",',
-    '  "subtasks": [',
-    '    { "title": "string", "body": "clear developer task contract with acceptance criteria" }',
-    "  ]",
-    "}",
-    "Create 3-6 subtasks only.",
+    `ISSUE ${issue.key}: ${issue.fields?.summary || ""}`,
+    `MEM ${j(architectMemory)}`,
+    `EVIDENCE ${j(evidencePaths)}`,
+    `SKILLS ${j(skillDocs)}`,
+    "RULES",
+    "- no discovery subtasks",
+    "- implementation tasks only",
+    "- changedFiles must be from EVIDENCE",
+    "- storyPoints integer 1..3",
+    "- suggestedSkill must be null or from SKILLS",
+    "- 3 to 6 subtasks",
+    `SCHEMA ${SUBTASK_SCHEMA}`,
   ].join("\n");
+}
+
+function hasDiscoverySubtask(subtasks) {
+  const discoveryTerms = [
+    "locate",
+    "find",
+    "discover where",
+    "verify ownership",
+    "ownership",
+    "investigate where",
+    "identify where",
+    "document ownership",
+    "confirm location",
+    "project navigator",
+  ];
+  return subtasks.some((subtask) => {
+    const text = `${subtask?.title || ""} ${subtask?.body || ""}`.toLowerCase();
+    return discoveryTerms.some((term) => text.includes(term));
+  });
+}
+
+async function rewriteToImplementationOnlySubtasks({
+  llm,
+  issue,
+  architectMemory,
+  implementationContext,
+  rejectedOutput,
+}) {
+  const repaired = await generateJsonWithRepair({
+    llm,
+    userPrompt: [
+      `Jira issue: ${issue.key} - ${issue.fields?.summary || ""}`,
+      `MEM ${j(architectMemory)}`,
+      `CTX ${j(implementationContext)}`,
+      "Bad output has discovery tasks. Rewrite.",
+      "Keep only implementation subtasks.",
+      "Keep changedFiles from evidence.",
+      "Keep storyPoints 1..3.",
+      "Keep suggestedSkill null or known skill doc.",
+      `BAD ${j(rejectedOutput)}`,
+      `SCHEMA ${SUBTASK_SCHEMA}`,
+    ].join("\n"),
+    failurePrefix: "Architect rewrite returned non-JSON content",
+    repairSchemaDescription: SUBTASK_SCHEMA,
+  });
+
+  return repaired;
 }
 
 function extractJsonCandidate(text) {
@@ -94,11 +131,10 @@ async function generateJsonWithRepair({
     const repairedText = await llm.generateText({
       systemPrompt: ARCHITECT_SYSTEM_PROMPT,
       userPrompt: [
-        "Convert the following response into strict valid JSON only.",
-        `Schema: ${repairSchemaDescription}`,
-        "Do not add markdown fences, comments, or prose.",
-        "",
-        "Response to repair:",
+        "Fix to strict JSON.",
+        `SCHEMA ${repairSchemaDescription}`,
+        "No prose. No markdown.",
+        "INPUT",
         firstText,
       ].join("\n"),
       temperature: 0,
@@ -112,8 +148,7 @@ export async function generateArchitectMemory({ llm, context }) {
     llm,
     userPrompt: buildArchitectMemoryPrompt(context),
     failurePrefix: "Architect memory generation returned non-JSON content",
-    repairSchemaDescription:
-      '{"projectOverview":"string","architecture":"string","iosConventions":["string"],"keyComponents":[{"name":"string","responsibility":"string"}],"deliveryGuidance":"string","knownRisks":["string"]}',
+    repairSchemaDescription: MEMORY_SCHEMA,
   });
 
   if (!parsed?.projectOverview || !Array.isArray(parsed?.keyComponents)) {
@@ -123,16 +158,55 @@ export async function generateArchitectMemory({ llm, context }) {
 }
 
 export async function runArchitect({ llm, issue, architectMemory, implementationContext }) {
-  const parsed = await generateJsonWithRepair({
+  const evidencePaths = new Set(
+    (implementationContext?.matches || []).map((item) => String(item.path || "").trim()).filter(Boolean)
+  );
+  const skillDocs = new Set((implementationContext?.skillDocs || []).map((item) => String(item || "").trim()));
+  let parsed = await generateJsonWithRepair({
     llm,
     userPrompt: buildArchitectPrompt(issue, architectMemory, implementationContext),
     failurePrefix: "Architect returned non-JSON content",
-    repairSchemaDescription:
-      '{"summary":"string","subtasks":[{"title":"string","body":"string with acceptance criteria"}]}',
+    repairSchemaDescription: SUBTASK_SCHEMA,
   });
 
   if (!Array.isArray(parsed.subtasks)) {
     throw new Error("Architect output missing subtasks array.");
+  }
+  if (hasDiscoverySubtask(parsed.subtasks)) {
+    parsed = await rewriteToImplementationOnlySubtasks({
+      llm,
+      issue,
+      architectMemory,
+      implementationContext,
+      rejectedOutput: parsed,
+    });
+    if (!Array.isArray(parsed.subtasks)) {
+      throw new Error("Architect rewrite output missing subtasks array.");
+    }
+    if (hasDiscoverySubtask(parsed.subtasks)) {
+      throw new Error("Architect rewrite still contains discovery/ownership subtasks.");
+    }
+  }
+
+  for (const [index, subtask] of parsed.subtasks.entries()) {
+    const points = Number(subtask?.storyPoints);
+    if (!Number.isInteger(points) || points < 1 || points > 3) {
+      throw new Error(`Architect subtask ${index + 1} has invalid storyPoints. Expected integer 1-3.`);
+    }
+    if (!Array.isArray(subtask?.changedFiles) || subtask.changedFiles.length === 0) {
+      throw new Error(`Architect subtask ${index + 1} must include changedFiles.`);
+    }
+    const hasOnlyEvidencePaths = subtask.changedFiles.every((filePath) => evidencePaths.has(filePath));
+    if (!hasOnlyEvidencePaths) {
+      throw new Error(
+        `Architect subtask ${index + 1} references changedFiles outside discovered implementation evidence.`
+      );
+    }
+    if (!(subtask.suggestedSkill === null || skillDocs.has(String(subtask.suggestedSkill || "").trim()))) {
+      throw new Error(
+        `Architect subtask ${index + 1} has suggestedSkill outside discovered repo skill docs.`
+      );
+    }
   }
 
   return parsed;

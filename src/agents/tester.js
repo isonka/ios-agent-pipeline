@@ -1,20 +1,12 @@
 function buildTesterPrompt({ issueKey, diff, context }) {
   return [
-    `Issue: ${issueKey}`,
-    "",
-    "Diff to validate:",
+    `ISSUE ${issueKey}`,
+    "DIFF",
     diff,
-    "",
-    "Project markdown docs:",
+    "DOCS",
     ...context.docs.map((doc) => `--- ${doc.path}\n${doc.content}`),
-    "",
-    "Return JSON with schema:",
-    "{",
-    '  "verdict": "PASS|FAIL",',
-    '  "reason": "why",',
-    '  "testPlan": "manual+automated checks",',
-    '  "bugsFound": ["..."]',
-    "}",
+    'SCHEMA {"verdict":"PASS|FAIL","reason":"why","testPlan":"manual+automated checks","bugsFound":["..."]}',
+    "JSON only.",
   ].join("\n");
 }
 

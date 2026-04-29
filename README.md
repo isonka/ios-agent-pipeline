@@ -1,12 +1,38 @@
 # iOS Agent Pipeline
 
-New implementation entrypoint: `src/server.js`.
+`ios-agent-pipeline` is a local orchestration server for Jira-driven iOS delivery using four AI roles:
 
-This tool orchestrates manual role handoff using Jira + AWS Bedrock Claude:
+- Architect
+- Developer
+- Tester
+- Reviewer
 
-Architect -> Developer -> Tester -> Code Reviewer
+Server entrypoint: `src/server.js`
 
-The pipeline runs against the repository configured in `.env` via `TARGET_PROJECT_PATH`.
+## What It Does
+
+Given a Jira issue, the pipeline coordinates role-based handoff:
+
+1. **Architect**
+   - learns project context from repository docs
+   - stores reusable memory in `/.ios-agent/architect-context.json`
+   - inspects live implementation evidence from source files for each story
+   - creates actionable Jira subtasks
+2. **Developer**
+   - produces implementation plan + patch proposal for one selected subtask
+3. **Tester**
+   - evaluates a diff and returns PASS/FAIL with test notes
+4. **Reviewer**
+   - evaluates a diff + tester report and returns merge recommendation
+
+Run artifacts are persisted in `.data/pipeline-runs/<ISSUE_KEY>.json`.
+
+## Requirements
+
+- Node.js 18+
+- Jira project access (API token)
+- AWS Bedrock access
+- Target repository must be a readable git repo root
 
 ## Setup
 
@@ -16,56 +42,40 @@ The pipeline runs against the repository configured in `.env` via `TARGET_PROJEC
 npm install
 ```
 
-2. Copy and fill environment values:
+2. Create `.env` from `.env.example` and fill required values.
 
-```bash
-cp .env.example .env
-```
-
-Notes:
-- `.env.example` defines required keys.
-- Startup fails fast if required keys are missing.
-- `LLM_PROVIDER` must be `bedrock`.
-
-3. Start:
+3. Start server:
 
 ```bash
 npm start
 ```
 
+Health check:
+
+```bash
+curl "http://localhost:3000/health"
+```
+
+## Configuration Notes
+
+- `LLM_PROVIDER` must be `bedrock`.
+- `TARGET_PROJECT_PATH` is used as default repo path when `targetRepoPath` is not sent in API requests.
+- `JIRA_SUBTASK_TARGET_STATUS` is optional; if set, newly created subtasks are moved to that Jira status.
+- Startup validation fails fast if required env vars are missing.
+
 ## API
+
+All endpoints are JSON over HTTP.
 
 ### `GET /health`
 
-Simple health endpoint.
-
-### `POST /pipeline/create-subtasks`
-
-Body:
-
-```json
-{
-  "issueKey": "IOS-123",
-  "targetRepoPath": "/absolute/path/to/target/repo"
-}
-```
-
-Notes:
-- `targetRepoPath` is optional; when omitted, `TARGET_PROJECT_PATH` from `.env` is used.
-
-Behavior:
-- Loads Jira issue.
-- Reads markdown docs from target repo.
-- Architect agent builds and stores reusable project memory in `.ios-agent/architect-context.json` (first run).
-- Architect agent reuses memory, inspects real implementation evidence for the story, and generates subtask contracts.
-- When story evidence reveals new implementation locations, architect memory is automatically updated.
-- Creates Jira subtasks.
-- Optionally moves created subtasks to `JIRA_SUBTASK_TARGET_STATUS`.
-- Saves run artifacts in `.data/pipeline-runs/<issue>.json`.
+Returns basic server status.
 
 ### `POST /pipeline/learn-architect-context`
 
-Body:
+Builds or refreshes architect memory for a target repo.
+
+Request body:
 
 ```json
 {
@@ -74,14 +84,40 @@ Body:
 }
 ```
 
+Notes:
+- `targetRepoPath` is optional.
+- When omitted, `TARGET_PROJECT_PATH` is used.
+- `forceRegenerate=true` rebuilds memory even if it already exists.
+
+### `POST /pipeline/create-subtasks`
+
+Creates architect subtasks for a Jira issue.
+
+Request body:
+
+```json
+{
+  "issueKey": "IOS-123",
+  "targetRepoPath": "/absolute/path/to/target/repo"
+}
+```
+
 Behavior:
-- Creates architect project memory if it does not exist.
-- Reuses existing memory by default.
-- If `forceRegenerate=true`, rebuilds memory from docs.
+- loads Jira issue
+- ensures architect memory exists
+- gathers story-specific implementation evidence from the codebase
+- updates memory when new implementation signals are discovered
+- generates 3-6 implementation-ready subtasks linked to real code files
+- enforces `storyPoints` between 1 and 3 per subtask
+- includes related repo skill guidance (`SKILL.md`) when relevant
+- creates subtasks in Jira
+- optionally transitions subtasks to `JIRA_SUBTASK_TARGET_STATUS`
 
 ### `POST /pipeline/run-developer`
 
-Body:
+Runs developer role for one subtask.
+
+Request body:
 
 ```json
 {
@@ -91,14 +127,11 @@ Body:
 }
 ```
 
-Behavior:
-- Developer agent works on one selected subtask.
-- Returns `patchProposal` (diff text) for manual apply/review.
-- Saves output in run artifact state.
-
 ### `POST /pipeline/run-tester`
 
-Body:
+Runs tester role for a provided unified diff.
+
+Request body:
 
 ```json
 {
@@ -107,13 +140,12 @@ Body:
   "targetRepoPath": "/absolute/path/to/target/repo"
 }
 ```
-
-Behavior:
-- Tester reviews the diff against context and returns `PASS` or `FAIL`.
 
 ### `POST /pipeline/run-reviewer`
 
-Body:
+Runs reviewer role for a provided unified diff.
+
+Request body:
 
 ```json
 {
@@ -123,11 +155,17 @@ Body:
 }
 ```
 
-Behavior:
-- Reviewer consumes diff and tester report and returns merge recommendation.
+## Testing
 
-## Runtime constraints
+Run tests:
 
-- Only AWS Bedrock Claude is supported (`LLM_PROVIDER=bedrock`).
-- `TARGET_PROJECT_PATH` must point to a readable git repo root.
-- Set `JIRA_SUBTASK_TARGET_STATUS` to automatically move new subtasks to a specific Jira status/column.
+```bash
+npm test
+```
+
+The suite includes architect-focused tests for:
+
+- JSON parsing and repair behavior
+- memory generation/reuse
+- subtask flow behavior
+- memory signal updates based on implementation evidence

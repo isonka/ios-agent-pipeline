@@ -1,18 +1,11 @@
 function buildDeveloperPrompt({ issue, subtaskKey, subtaskSummary, context }) {
   return [
-    `Parent issue: ${issue.key} - ${issue.fields?.summary || ""}`,
-    `Selected subtask: ${subtaskKey} - ${subtaskSummary || ""}`,
-    "",
-    "Project markdown docs:",
+    `ISSUE ${issue.key}: ${issue.fields?.summary || ""}`,
+    `SUBTASK ${subtaskKey}: ${subtaskSummary || ""}`,
+    "DOCS",
     ...context.docs.map((doc) => `--- ${doc.path}\n${doc.content}`),
-    "",
-    "Return JSON with schema:",
-    "{",
-    '  "implementationPlan": "short plan",',
-    '  "patchProposal": "unified diff patch text only",',
-    '  "riskNotes": "main risks",',
-    '  "testStubs": "tests developer expects to add/run"',
-    "}",
+    'SCHEMA {"implementationPlan":"short plan","patchProposal":"unified diff patch text only","riskNotes":"main risks","testStubs":"tests developer expects to add/run"}',
+    "JSON only.",
   ].join("\n");
 }
 
