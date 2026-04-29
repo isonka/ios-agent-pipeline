@@ -78,7 +78,7 @@ function issueRawText(issue) {
 function extractHintedRoots(issue, targetRepoPath) {
   const raw = issueRawText(issue);
   const normalizedRaw = raw.replace(/TargetSharedSources/gi, "TargetShared/Sources");
-  const pathHints = normalizedRaw.match(/\b(?:TargetShared|Modules)\/[A-Za-z0-9_\-./ ]+/g) || [];
+  const pathHints = normalizedRaw.match(/\b(?:TargetShared|Modules)\/[A-Za-z0-9_\-./]+/g) || [];
   const roots = [];
 
   for (const rawHint of pathHints) {

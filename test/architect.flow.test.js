@@ -552,7 +552,7 @@ test("deterministic planner seeds evidence from hinted root path", async () => {
     fields: {
       summary: "Discover Packages - Migrate UIKit to SwiftUI",
       description:
-        "Discover packages is located in TargetShared/Sources/TargetShared/SMB/ Migrate UIKit elements.",
+        "Discover packages is located in TargetShared/Sources/TargetShared/SMB/ Migrate all UKIt related elements to SwiftUI using HorizonUI components.",
     },
   };
 
