@@ -306,6 +306,9 @@ test("deterministic planner respects TargetShared module hint from Jira descript
   await fs.mkdir(path.join(repoPath, "TargetShared", "Tests", "TargetSharedTests", "ASQ"), {
     recursive: true,
   });
+  await fs.mkdir(path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore"), {
+    recursive: true,
+  });
   await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
 
   await fs.writeFile(
@@ -328,6 +331,13 @@ test("deterministic planner respects TargetShared module hint from Jira descript
     "// discover packages unrelated test\n",
     "utf8"
   );
+  for (let index = 0; index < 30; index += 1) {
+    await fs.writeFile(
+      path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore", `Noise${index}.swift`),
+      `// Discover packages migrate UIKit to SwiftUI noise ${index}\n`,
+      "utf8"
+    );
+  }
   await fs.writeFile(
     path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
     "# skill\n",

@@ -68,6 +68,27 @@ function extractKeywords(issue) {
   return unique([...quotedPhrases, ...capitalizedPhrases, ...words]).slice(0, 18);
 }
 
+function issueRawText(issue) {
+  const summary = String(issue?.fields?.summary || "");
+  const description = toSearchableText(issue?.fields?.description);
+  return `${summary} ${description}`.trim();
+}
+
+function extractHintedRoots(issue, targetRepoPath) {
+  const raw = issueRawText(issue);
+  const normalizedRaw = raw.replace(/TargetSharedSources/gi, "TargetShared/Sources");
+  const pathHints = normalizedRaw.match(/\b(?:TargetShared|Modules)\/[A-Za-z0-9_\-./ ]+/g) || [];
+  const roots = [];
+
+  for (const rawHint of pathHints) {
+    const cleanHint = rawHint.replace(/[,.;:)\]]+$/, "").replace(/\/+$/, "");
+    const absolute = path.join(targetRepoPath, cleanHint);
+    roots.push(absolute);
+  }
+
+  return unique(roots);
+}
+
 function shouldSkipDir(name) {
   return SKIP_DIRECTORIES.has(name);
 }
@@ -104,19 +125,24 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
     };
   }
 
-  const queue = [targetRepoPath];
+  const hintedRoots = extractHintedRoots(issue, targetRepoPath);
+  const queue = [...hintedRoots, targetRepoPath];
+  const visitedDirs = new Set();
   let filesScanned = 0;
   const matches = [];
   const skillDocs = [];
 
   while (queue.length && filesScanned < MAX_FILES_SCANNED) {
     const currentDir = queue.shift();
+    if (visitedDirs.has(currentDir)) continue;
+    visitedDirs.add(currentDir);
     const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => []);
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (!shouldSkipDir(entry.name)) {
-          queue.push(path.join(currentDir, entry.name));
+          const nextDir = path.join(currentDir, entry.name);
+          if (!visitedDirs.has(nextDir)) queue.push(nextDir);
         }
         continue;
       }
@@ -167,5 +193,6 @@ export async function buildIssueImplementationContext({ targetRepoPath, issue })
     filesScanned,
     matches,
     skillDocs,
+    hintedRoots: hintedRoots.map((root) => normalizedRelPath(targetRepoPath, root)),
   };
 }
