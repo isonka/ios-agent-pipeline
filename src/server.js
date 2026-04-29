@@ -112,7 +112,9 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       llm: deps.llm,
       jira: deps.jira,
       issue,
+      targetRepoPath: resolvedRepoPath,
       architectMemory: memoryResult.architectMemory,
+      architectMemoryPath: memoryResult.architectMemoryPath,
       jiraSubtaskTargetStatus: config.jiraSubtaskTargetStatus,
     });
 
@@ -123,7 +125,10 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       architectMemory: {
         path: memoryResult.architectMemoryPath,
         generated: memoryResult.architectMemoryGenerated,
+        updated: architectResult.architectMemoryUpdated,
+        addedSignals: architectResult.architectMemoryAddedSignals,
       },
+      implementationContext: architectResult.implementationContext,
       subtasks: architectResult.createdSubtasks,
       updatedAt: new Date().toISOString(),
     });
@@ -134,6 +139,9 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
         `Architect created ${architectResult.createdSubtasks.length} subtasks for ${issue.key}.`,
         `Target repo: ${resolvedRepoPath}`,
         `Architect memory: ${memoryResult.architectMemoryPath} (${memoryResult.architectMemoryGenerated ? "created" : "reused"})`,
+        architectResult.architectMemoryUpdated
+          ? `Architect memory updated with ${architectResult.architectMemoryAddedSignals} new implementation signals.`
+          : "Architect memory had no new implementation signals.",
         config.jiraSubtaskTargetStatus
           ? `Subtasks moved to status: ${config.jiraSubtaskTargetStatus}`
           : "Subtasks left in Jira default status.",
@@ -145,7 +153,10 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       targetRepoPath: resolvedRepoPath,
       architectMemoryPath: memoryResult.architectMemoryPath,
       architectMemoryGenerated: memoryResult.architectMemoryGenerated,
+      architectMemoryUpdated: architectResult.architectMemoryUpdated,
+      architectMemoryAddedSignals: architectResult.architectMemoryAddedSignals,
       summary: architectResult.summary,
+      implementationContext: architectResult.implementationContext,
       subtasks: architectResult.createdSubtasks,
     });
   } catch (error) {

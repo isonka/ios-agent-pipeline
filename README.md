@@ -57,7 +57,8 @@ Behavior:
 - Loads Jira issue.
 - Reads markdown docs from target repo.
 - Architect agent builds and stores reusable project memory in `.ios-agent/architect-context.json` (first run).
-- Architect agent reuses memory and generates subtask contracts.
+- Architect agent reuses memory, inspects real implementation evidence for the story, and generates subtask contracts.
+- When story evidence reveals new implementation locations, architect memory is automatically updated.
 - Creates Jira subtasks.
 - Optionally moves created subtasks to `JIRA_SUBTASK_TARGET_STATUS`.
 - Saves run artifacts in `.data/pipeline-runs/<issue>.json`.
