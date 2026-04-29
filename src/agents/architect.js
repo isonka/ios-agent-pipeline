@@ -38,53 +38,6 @@ function buildArchitectPrompt(issue, architectMemory, implementationContext) {
   ].join("\n");
 }
 
-function hasDiscoverySubtask(subtasks) {
-  const discoveryTerms = [
-    "locate",
-    "find",
-    "discover where",
-    "verify ownership",
-    "ownership",
-    "investigate where",
-    "identify where",
-    "document ownership",
-    "confirm location",
-    "project navigator",
-  ];
-  return subtasks.some((subtask) => {
-    const text = `${subtask?.title || ""} ${subtask?.body || ""}`.toLowerCase();
-    return discoveryTerms.some((term) => text.includes(term));
-  });
-}
-
-async function rewriteToImplementationOnlySubtasks({
-  llm,
-  issue,
-  architectMemory,
-  implementationContext,
-  rejectedOutput,
-}) {
-  const repaired = await generateJsonWithRepair({
-    llm,
-    userPrompt: [
-      `Jira issue: ${issue.key} - ${issue.fields?.summary || ""}`,
-      `MEM ${j(architectMemory)}`,
-      `CTX ${j(implementationContext)}`,
-      "Bad output has discovery tasks. Rewrite.",
-      "Keep only implementation subtasks.",
-      "Keep changedFiles from evidence.",
-      "Keep storyPoints 1..3.",
-      "Keep suggestedSkill null or known skill doc.",
-      `BAD ${j(rejectedOutput)}`,
-      `SCHEMA ${SUBTASK_SCHEMA}`,
-    ].join("\n"),
-    failurePrefix: "Architect rewrite returned non-JSON content",
-    repairSchemaDescription: SUBTASK_SCHEMA,
-  });
-
-  return repaired;
-}
-
 function extractJsonCandidate(text) {
   if (!text) return "";
   const trimmed = text.trim();
@@ -162,7 +115,7 @@ export async function runArchitect({ llm, issue, architectMemory, implementation
     (implementationContext?.matches || []).map((item) => String(item.path || "").trim()).filter(Boolean)
   );
   const skillDocs = new Set((implementationContext?.skillDocs || []).map((item) => String(item || "").trim()));
-  let parsed = await generateJsonWithRepair({
+  const parsed = await generateJsonWithRepair({
     llm,
     userPrompt: buildArchitectPrompt(issue, architectMemory, implementationContext),
     failurePrefix: "Architect returned non-JSON content",
@@ -171,21 +124,6 @@ export async function runArchitect({ llm, issue, architectMemory, implementation
 
   if (!Array.isArray(parsed.subtasks)) {
     throw new Error("Architect output missing subtasks array.");
-  }
-  if (hasDiscoverySubtask(parsed.subtasks)) {
-    parsed = await rewriteToImplementationOnlySubtasks({
-      llm,
-      issue,
-      architectMemory,
-      implementationContext,
-      rejectedOutput: parsed,
-    });
-    if (!Array.isArray(parsed.subtasks)) {
-      throw new Error("Architect rewrite output missing subtasks array.");
-    }
-    if (hasDiscoverySubtask(parsed.subtasks)) {
-      throw new Error("Architect rewrite still contains discovery/ownership subtasks.");
-    }
   }
 
   for (const [index, subtask] of parsed.subtasks.entries()) {

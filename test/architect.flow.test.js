@@ -171,9 +171,9 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
   });
 
   assert.equal(result.createdSubtasks.length, 2);
-  assert.equal(llmCalls, 2);
+  assert.equal(llmCalls, 1);
   assert.equal(jira.transitioned.length, 2);
-  assert.equal(result.createdSubtasks[0].storyPoints, 3);
+  assert.equal(result.createdSubtasks[0].storyPoints, 1);
   assert.deepEqual(result.createdSubtasks[0].changedFiles, ["DiscoverPackagesView.swift"]);
   assert.equal(result.architectMemoryUpdated, true);
   assert.ok(result.architectMemoryAddedSignals > 0);
@@ -183,6 +183,115 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
   const updatedMemory = await loadArchitectMemory(repoPath);
   assert.ok(Array.isArray(updatedMemory.content.implementationSignals));
   assert.ok(updatedMemory.content.implementationSignals.length > 0);
-  assert.match(jira.created[0].body, /Story points: 3/);
+  assert.match(jira.created[0].body, /Story points: 1/);
   assert.match(jira.created[0].body, /Changed files:/);
+});
+
+test("createArchitectSubtasks uses deterministic planning for UIKit to SwiftUI story", async () => {
+  const repoPath = await makeTempRepo();
+  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
+  await fs.mkdir(path.join(repoPath, "TargetShared", "Sources", "TargetShared", "VIP", "View"), {
+    recursive: true,
+  });
+  await fs.mkdir(
+    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "VIP", "Main Vip", "ViewState"),
+    { recursive: true }
+  );
+  await fs.mkdir(path.join(repoPath, "Modules", "VIP", "Sources", "VIP", "View", "DeliveryPackages"), {
+    recursive: true,
+  });
+  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
+
+  await fs.writeFile(
+    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "VIP", "View", "VipViewController.swift"),
+    "import UIKit\nfinal class VipViewController: UIViewController {}\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(
+      repoPath,
+      "TargetShared",
+      "Sources",
+      "TargetShared",
+      "VIP",
+      "Main Vip",
+      "ViewState",
+      "VipViewState+Converter.swift"
+    ),
+    "import Foundation\nstruct VipViewStateConverter {}\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(repoPath, "Modules", "VIP", "Sources", "VIP", "View", "DeliveryPackages", "DeliveryPackagesView.swift"),
+    "import SwiftUI\nstruct DeliveryPackagesView: View { var body: some View { Text(\"x\") } }\n",
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
+    "# skill\n",
+    "utf8"
+  );
+
+  await saveArchitectMemory(repoPath, {
+    generatedAt: new Date().toISOString(),
+    sourceDocuments: ["README.md"],
+    content: {
+      projectOverview: "Overview",
+      architecture: "Architecture",
+      iosConventions: ["Swift"],
+      keyComponents: [{ name: "Discover", responsibility: "Offers" }],
+      deliveryGuidance: "Guidance",
+      knownRisks: [],
+    },
+  });
+
+  const llm = {
+    async generateText() {
+      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
+    },
+  };
+
+  const jira = {
+    created: [],
+    async createSubtask(parentKey, title, body) {
+      const key = `${parentKey}-${this.created.length + 1}`;
+      this.created.push({ key, title, body });
+      return { key };
+    },
+    async transitionIssueToStatus() {},
+  };
+
+  const issue = {
+    key: "IOS-300",
+    fields: { summary: "Discover Packages - Migrate UIKit to SwiftUI", description: "" },
+  };
+
+  const result = await createArchitectSubtasks({
+    llm,
+    jira,
+    issue,
+    targetRepoPath: repoPath,
+    architectMemory: {
+      projectOverview: "Overview",
+      architecture: "Architecture",
+      iosConventions: ["Swift"],
+      keyComponents: [{ name: "Discover", responsibility: "Offers" }],
+      deliveryGuidance: "Guidance",
+      knownRisks: [],
+    },
+    architectMemoryPath: ".ios-agent/architect-context.json",
+    jiraSubtaskTargetStatus: "",
+  });
+
+  assert.ok(result.summary.includes("UIKit->SwiftUI"));
+  assert.ok(result.createdSubtasks.length >= 3);
+  assert.equal(result.createdSubtasks[0].storyPoints <= 3, true);
+  assert.ok(Array.isArray(result.createdSubtasks[0].changedFiles));
+  assert.ok(result.createdSubtasks[0].changedFiles.length > 0);
+  assert.ok(result.moduleResolution);
+  assert.ok(["high", "medium"].includes(result.moduleResolution.confidence));
+  assert.equal(
+    result.createdSubtasks.some((item) => item.suggestedSkill?.includes("uikit-to-swiftui")),
+    true
+  );
 });

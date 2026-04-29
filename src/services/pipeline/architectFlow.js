@@ -6,60 +6,10 @@ import {
 } from "../architectMemory.js";
 import { buildIssueImplementationContext } from "../storyImplementationContext.js";
 import { generateArchitectMemory, runArchitect } from "../../agents/architect.js";
-
-function normalizePath(pathValue) {
-  return String(pathValue || "").trim().toLowerCase();
-}
-
-function mergeImplementationSignals(existingMemoryContent, implementationContext, issueKey) {
-  const existingSignals = Array.isArray(existingMemoryContent?.implementationSignals)
-    ? existingMemoryContent.implementationSignals
-    : [];
-  const existingPaths = new Set(existingSignals.map((item) => normalizePath(item.path)));
-
-  const newSignals = [];
-  for (const match of implementationContext.matches || []) {
-    const normalizedPath = normalizePath(match.path);
-    if (!normalizedPath || existingPaths.has(normalizedPath)) continue;
-    existingPaths.add(normalizedPath);
-    newSignals.push({
-      path: match.path,
-      reason: match.reason,
-      learnedFromIssue: issueKey,
-      learnedAt: new Date().toISOString(),
-    });
-  }
-
-  if (!newSignals.length) {
-    return {
-      mergedContent: existingMemoryContent,
-      updated: false,
-      addedSignals: 0,
-    };
-  }
-
-  return {
-    mergedContent: {
-      ...existingMemoryContent,
-      implementationSignals: [...existingSignals, ...newSignals],
-    },
-    updated: true,
-    addedSignals: newSignals.length,
-  };
-}
-
-function formatSubtaskDescription(subtask) {
-  const changedFilesLines = (subtask.changedFiles || []).map((filePath) => `- ${filePath}`);
-  const skillLine = subtask.suggestedSkill ? subtask.suggestedSkill : "none";
-  return [
-    subtask.body,
-    "",
-    `Story points: ${subtask.storyPoints}`,
-    "Changed files:",
-    ...changedFilesLines,
-    `Suggested skill: ${skillLine}`,
-  ].join("\n");
-}
+import { buildUIKitToSwiftUISubtasks } from "./deterministicPlanner.js";
+import { mergeImplementationSignals } from "./memorySignals.js";
+import { resolvePrimaryModule, isUIKitToSwiftUIMigrationStory } from "./moduleResolution.js";
+import { formatSubtaskDescription } from "./subtaskDescription.js";
 
 export async function ensureArchitectMemory({
   llm,
@@ -115,12 +65,22 @@ export async function createArchitectSubtasks({
     );
   }
 
-  const architectResult = await runArchitect({
-    llm,
-    issue,
-    architectMemory,
-    implementationContext,
-  });
+  const resolvedModule = resolvePrimaryModule(issue, implementationContext);
+  const architectResult = isUIKitToSwiftUIMigrationStory(issue)
+    ? (() => {
+        if (!resolvedModule.primary || resolvedModule.confidence === "low") {
+          throw new Error(
+            `Low confidence module resolution for UIKit->SwiftUI story. ${resolvedModule.reason}`
+          );
+        }
+        return buildUIKitToSwiftUISubtasks(issue, implementationContext, resolvedModule);
+      })()
+    : await runArchitect({
+        llm,
+        issue,
+        architectMemory,
+        implementationContext,
+      });
 
   let architectMemoryUpdated = false;
   let architectMemoryAddedSignals = 0;
@@ -163,6 +123,7 @@ export async function createArchitectSubtasks({
 
   return {
     summary: architectResult.summary,
+    moduleResolution: architectResult.moduleResolution || null,
     implementationContext,
     architectMemoryUpdated,
     architectMemoryAddedSignals,

@@ -156,6 +156,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       architectMemoryUpdated: architectResult.architectMemoryUpdated,
       architectMemoryAddedSignals: architectResult.architectMemoryAddedSignals,
       summary: architectResult.summary,
+      moduleResolution: architectResult.moduleResolution,
       implementationContext: architectResult.implementationContext,
       subtasks: architectResult.createdSubtasks,
     });
