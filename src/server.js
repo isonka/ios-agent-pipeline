@@ -4,9 +4,7 @@ import { validateEnv, envConfig } from "./config/env.js";
 import { resolveTargetRepoPath } from "./services/repoPath.js";
 import { buildProjectContext } from "./services/projectContext.js";
 import { loadRunState, saveRunState } from "./services/runStore.js";
-import {
-  createArchitectSubtasks,
-} from "./services/pipeline/architectFlow.js";
+import { runArchitectForIssue } from "./services/pipeline/architectFlow.js";
 import { BedrockClaudeClient } from "./llm/bedrockClaude.js";
 import { JiraClient } from "./integrations/jiraClient.js";
 import { runDeveloper } from "./agents/developer.js";
@@ -65,6 +63,27 @@ async function loadIssueAndContext({ jira, issueKey, targetRepoPath, targetFallb
   return { issue, context, resolvedRepoPath };
 }
 
+function formatPlanItemsForDeveloperPrompt(planItems) {
+  if (!Array.isArray(planItems) || planItems.length === 0) {
+    return "(No architect plan in run state. POST /pipeline/create-subtasks for this issue first.)";
+  }
+  return planItems
+    .map((item, index) => {
+      const files = (item.changedFiles || []).map((filePath) => `- ${filePath}`).join("\n");
+      return [
+        `[${index + 1}] ${item.title}`,
+        item.body || "",
+        `storyPoints: ${item.storyPoints}`,
+        "changedFiles:",
+        files || "- (none)",
+        item.suggestedSkill ? `suggestedSkill: ${item.suggestedSkill}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n\n---\n\n");
+}
+
 app.post("/pipeline/create-subtasks", async (req, res) => {
   try {
     const { issueKey, targetRepoPath } = req.body || {};
@@ -79,33 +98,24 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       targetFallback: config.targetProjectPathFallback,
     });
 
-    const architectResult = await createArchitectSubtasks({
+    const architectResult = await runArchitectForIssue({
       llm: deps.llm,
       jira: deps.jira,
       issue,
       targetRepoPath: resolvedRepoPath,
-      jiraSubtaskTargetStatus: config.jiraSubtaskTargetStatus,
     });
 
     await saveRunState(config.runStateDir, issue.key, {
       issueKey: issue.key,
       targetRepoPath: resolvedRepoPath,
-      architect: architectResult,
+      architect: {
+        summary: architectResult.summary,
+        planItems: architectResult.planItems,
+        moduleResolution: architectResult.moduleResolution,
+      },
       implementationContext: architectResult.implementationContext,
-      subtasks: architectResult.createdSubtasks,
       updatedAt: new Date().toISOString(),
     });
-
-    await deps.jira.addComment(
-      issue.key,
-      [
-        `Architect created ${architectResult.createdSubtasks.length} subtasks for ${issue.key}.`,
-        `Target repo: ${resolvedRepoPath}`,
-        config.jiraSubtaskTargetStatus
-          ? `Subtasks moved to status: ${config.jiraSubtaskTargetStatus}`
-          : "Subtasks left in Jira default status.",
-      ].join("\n")
-    );
 
     res.status(200).json({
       issueKey: issue.key,
@@ -113,7 +123,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       summary: architectResult.summary,
       moduleResolution: architectResult.moduleResolution,
       implementationContext: architectResult.implementationContext,
-      subtasks: architectResult.createdSubtasks,
+      planItems: architectResult.planItems,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -122,9 +132,8 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
 
 app.post("/pipeline/run-developer", async (req, res) => {
   try {
-    const { issueKey, subtaskKey, targetRepoPath } = req.body || {};
+    const { issueKey, targetRepoPath } = req.body || {};
     if (!issueKey) return jsonError(res, 400, "issueKey is required");
-    if (!subtaskKey) return jsonError(res, 400, "subtaskKey is required");
 
     const config = envConfig();
     const deps = createDependencies(config);
@@ -136,13 +145,12 @@ app.post("/pipeline/run-developer", async (req, res) => {
     });
 
     const runState = await loadRunState(config.runStateDir, issueKey);
-    const subtaskSummary = runState?.subtasks?.find((item) => item.key === subtaskKey)?.title || "";
+    const architectPlanText = formatPlanItemsForDeveloperPrompt(runState?.architect?.planItems);
 
     const developerResult = await runDeveloper({
       llm: deps.llm,
       issue,
-      subtaskKey,
-      subtaskSummary,
+      architectPlanText,
       context,
     });
 
@@ -151,7 +159,6 @@ app.post("/pipeline/run-developer", async (req, res) => {
       issueKey,
       targetRepoPath: resolvedRepoPath,
       developer: {
-        subtaskKey,
         ...developerResult,
       },
       updatedAt: new Date().toISOString(),
@@ -160,13 +167,12 @@ app.post("/pipeline/run-developer", async (req, res) => {
 
     await deps.jira.addComment(
       issueKey,
-      `Developer selected ${subtaskKey} and produced patch proposal.\n\n${developerResult.implementationPlan || ""}`
+      `Developer output for ${issueKey} (uses architect plan from run state).\n\n${developerResult.implementationPlan || ""}`
     );
 
     res.status(200).json({
       issueKey,
       targetRepoPath: resolvedRepoPath,
-      subtaskKey,
       ...developerResult,
     });
   } catch (error) {

@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 
-import { createArchitectSubtasks } from "../src/services/pipeline/architectFlow.js";
+import { runArchitectForIssue } from "../src/services/pipeline/architectFlow.js";
 
 async function makeTempRepo() {
   const repoPath = await fs.mkdtemp(path.join(os.tmpdir(), "ios-agent-pipeline-"));
@@ -12,7 +12,7 @@ async function makeTempRepo() {
   return repoPath;
 }
 
-test("createArchitectSubtasks creates subtasks from LLM using issue and evidence only", async () => {
+test("runArchitectForIssue creates plan from LLM using issue and evidence only", async () => {
   const repoPath = await makeTempRepo();
   await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
   await fs.writeFile(
@@ -75,15 +75,9 @@ test("createArchitectSubtasks creates subtasks from LLM using issue and evidence
   };
 
   const jira = {
-    created: [],
-    transitioned: [],
-    async createSubtask(parentKey, title, body) {
-      const key = `${parentKey}-${this.created.length + 1}`;
-      this.created.push({ key, title, body });
-      return { key };
-    },
-    async transitionIssueToStatus(issueKey, status) {
-      this.transitioned.push({ issueKey, status });
+    planComments: [],
+    async addCommentParagraphs(issueKey, text) {
+      this.planComments.push({ issueKey, text });
     },
   };
 
@@ -95,27 +89,27 @@ test("createArchitectSubtasks creates subtasks from LLM using issue and evidence
     },
   };
 
-  const result = await createArchitectSubtasks({
+  const result = await runArchitectForIssue({
     llm,
     jira,
     issue,
     targetRepoPath: repoPath,
-    jiraSubtaskTargetStatus: "In Progress",
   });
 
-  assert.equal(result.createdSubtasks.length, 2);
+  assert.equal(result.planItems.length, 2);
   assert.equal(llmCalls, 1);
-  assert.equal(jira.transitioned.length, 2);
-  assert.equal(result.createdSubtasks[0].storyPoints, 1);
-  assert.deepEqual(result.createdSubtasks[0].changedFiles, ["DiscoverPackagesView.swift"]);
+  assert.equal(result.planItems[0].storyPoints, 1);
+  assert.deepEqual(result.planItems[0].changedFiles, ["DiscoverPackagesView.swift"]);
   assert.ok(result.implementationContext.matches.length > 0);
   assert.ok(result.implementationContext.skillDocs.includes("skills/swiftui-migration/SKILL.md"));
 
-  assert.match(jira.created[0].body, /Story points: 1/);
-  assert.match(jira.created[0].body, /Changed files:/);
+  assert.equal(jira.planComments.length, 1);
+  assert.equal(jira.planComments[0].issueKey, "IOS-200");
+  assert.match(jira.planComments[0].text, /Architect plan/);
+  assert.match(jira.planComments[0].text, /Story points: 1/);
 });
 
-test("createArchitectSubtasks uses deterministic planning for UIKit to SwiftUI story", async () => {
+test("runArchitectForIssue uses deterministic planning for UIKit to SwiftUI story", async () => {
   const repoPath = await makeTempRepo();
   await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
   await fs.mkdir(path.join(repoPath, "TargetShared", "Sources", "TargetShared", "VIP", "View"), {
@@ -167,13 +161,10 @@ test("createArchitectSubtasks uses deterministic planning for UIKit to SwiftUI s
   };
 
   const jira = {
-    created: [],
-    async createSubtask(parentKey, title, body) {
-      const key = `${parentKey}-${this.created.length + 1}`;
-      this.created.push({ key, title, body });
-      return { key };
+    planComments: [],
+    async addCommentParagraphs(issueKey, text) {
+      this.planComments.push({ issueKey, text });
     },
-    async transitionIssueToStatus() {},
   };
 
   const issue = {
@@ -181,25 +172,25 @@ test("createArchitectSubtasks uses deterministic planning for UIKit to SwiftUI s
     fields: { summary: "Discover Packages - Migrate UIKit to SwiftUI", description: "" },
   };
 
-  const result = await createArchitectSubtasks({
+  const result = await runArchitectForIssue({
     llm,
     jira,
     issue,
     targetRepoPath: repoPath,
-    jiraSubtaskTargetStatus: "",
   });
 
   assert.ok(result.summary.includes("UIKit->SwiftUI"));
-  assert.ok(result.createdSubtasks.length >= 3);
-  assert.equal(result.createdSubtasks[0].storyPoints <= 3, true);
-  assert.ok(Array.isArray(result.createdSubtasks[0].changedFiles));
-  assert.ok(result.createdSubtasks[0].changedFiles.length > 0);
+  assert.ok(result.planItems.length >= 3);
+  assert.equal(result.planItems[0].storyPoints <= 3, true);
+  assert.ok(Array.isArray(result.planItems[0].changedFiles));
+  assert.ok(result.planItems[0].changedFiles.length > 0);
   assert.ok(result.moduleResolution);
   assert.ok(["high", "medium"].includes(result.moduleResolution.confidence));
   assert.equal(
-    result.createdSubtasks.some((item) => item.suggestedSkill?.includes("uikit-to-swiftui")),
+    result.planItems.some((item) => item.suggestedSkill?.includes("uikit-to-swiftui")),
     true
   );
+  assert.equal(jira.planComments.length, 1);
 });
 
 test("deterministic planner respects TargetShared module hint from Jira description", async () => {
@@ -257,13 +248,10 @@ test("deterministic planner respects TargetShared module hint from Jira descript
   };
 
   const jira = {
-    created: [],
-    async createSubtask(parentKey, title, body) {
-      const key = `${parentKey}-${this.created.length + 1}`;
-      this.created.push({ key, title, body });
-      return { key };
+    planComments: [],
+    async addCommentParagraphs(issueKey, text) {
+      this.planComments.push({ issueKey, text });
     },
-    async transitionIssueToStatus() {},
   };
 
   const issue = {
@@ -274,18 +262,17 @@ test("deterministic planner respects TargetShared module hint from Jira descript
     },
   };
 
-  const result = await createArchitectSubtasks({
+  const result = await runArchitectForIssue({
     llm,
     jira,
     issue,
     targetRepoPath: repoPath,
-    jiraSubtaskTargetStatus: "",
   });
 
   assert.equal(result.moduleResolution.primaryModule, "TargetShared/SMB");
   assert.ok(
-    result.createdSubtasks
-      .flatMap((subtask) => subtask.changedFiles || [])
+    result.planItems
+      .flatMap((item) => item.changedFiles || [])
       .every((filePath) => filePath.includes("TargetShared/Sources/TargetShared/SMB"))
   );
 });
@@ -318,10 +305,10 @@ test("deterministic planner fails when hinted module has no evidence", async () 
   };
 
   const jira = {
-    async createSubtask() {
-      throw new Error("Subtasks should not be created on low-confidence module resolution");
+    planComments: [],
+    async addCommentParagraphs(issueKey, text) {
+      this.planComments.push({ issueKey, text });
     },
-    async transitionIssueToStatus() {},
   };
 
   const issue = {
@@ -334,12 +321,11 @@ test("deterministic planner fails when hinted module has no evidence", async () 
 
   await assert.rejects(
     () =>
-      createArchitectSubtasks({
+      runArchitectForIssue({
         llm,
         jira,
         issue,
         targetRepoPath: repoPath,
-        jiraSubtaskTargetStatus: "",
       }),
     /Low confidence module resolution/
   );
@@ -387,13 +373,10 @@ test("deterministic planner seeds evidence from hinted root path", async () => {
   };
 
   const jira = {
-    created: [],
-    async createSubtask(parentKey, title, body) {
-      const key = `${parentKey}-${this.created.length + 1}`;
-      this.created.push({ key, title, body });
-      return { key };
+    planComments: [],
+    async addCommentParagraphs(issueKey, text) {
+      this.planComments.push({ issueKey, text });
     },
-    async transitionIssueToStatus() {},
   };
 
   const issue = {
@@ -405,14 +388,13 @@ test("deterministic planner seeds evidence from hinted root path", async () => {
     },
   };
 
-  const result = await createArchitectSubtasks({
+  const result = await runArchitectForIssue({
     llm,
     jira,
     issue,
     targetRepoPath: repoPath,
-    jiraSubtaskTargetStatus: "",
   });
 
   assert.equal(result.moduleResolution.primaryModule, "TargetShared/SMB");
-  assert.ok(result.createdSubtasks.length > 0);
+  assert.ok(result.planItems.length > 0);
 });

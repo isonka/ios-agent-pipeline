@@ -57,7 +57,6 @@ export function envConfig() {
     jiraEmail: process.env.JIRA_EMAIL,
     jiraApiToken: process.env.JIRA_API_TOKEN,
     jiraProjectKey: process.env.JIRA_PROJECT_KEY,
-    jiraSubtaskTargetStatus: process.env.JIRA_SUBTASK_TARGET_STATUS || "",
     runStateDir: process.env.PIPELINE_RUN_STATE_DIR || ".data/pipeline-runs",
   };
 }

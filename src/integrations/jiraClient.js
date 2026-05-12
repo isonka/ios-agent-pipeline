@@ -73,45 +73,4 @@ export class JiraClient {
       },
     });
   }
-
-  async createSubtask(parentIssueKey, title, description) {
-    return this.request("POST", "/rest/api/3/issue", {
-      fields: {
-        project: { key: this.projectKey },
-        parent: { key: parentIssueKey },
-        summary: title,
-        description: {
-          type: "doc",
-          version: 1,
-          content: [{ type: "paragraph", content: [{ type: "text", text: description }] }],
-        },
-        issuetype: { name: "Sub-task" },
-      },
-    });
-  }
-
-  async getIssueTransitions(issueKey) {
-    const payload = await this.request("GET", `/rest/api/3/issue/${issueKey}/transitions`);
-    return payload?.transitions || [];
-  }
-
-  async transitionIssueToStatus(issueKey, statusName) {
-    const transitions = await this.getIssueTransitions(issueKey);
-    const normalizedTarget = String(statusName || "").trim().toLowerCase();
-    const match = transitions.find((transition) => {
-      const toName = String(transition?.to?.name || "").trim().toLowerCase();
-      return toName === normalizedTarget;
-    });
-
-    if (!match) {
-      const available = transitions.map((transition) => transition?.to?.name).filter(Boolean);
-      throw new Error(
-        `No Jira transition from ${issueKey} to status '${statusName}'. Available: ${available.join(", ")}`
-      );
-    }
-
-    await this.request("POST", `/rest/api/3/issue/${issueKey}/transitions`, {
-      transition: { id: match.id },
-    });
-  }
 }
