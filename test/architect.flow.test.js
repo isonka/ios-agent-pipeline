@@ -109,54 +109,39 @@ test("runArchitectForIssue creates plan from LLM using issue and evidence only",
   assert.match(jira.planComments[0].text, /Story points: 1/);
 });
 
-test("runArchitectForIssue uses deterministic planning for UIKit to SwiftUI story", async () => {
+test("runArchitectForIssue uses LLM for migration-style summary (no deterministic branch)", async () => {
   const repoPath = await makeTempRepo();
   await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
-  await fs.mkdir(path.join(repoPath, "TargetShared", "Sources", "TargetShared", "VIP", "View"), {
-    recursive: true,
-  });
-  await fs.mkdir(
-    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "VIP", "Main Vip", "ViewState"),
-    { recursive: true }
-  );
-  await fs.mkdir(path.join(repoPath, "Modules", "VIP", "Sources", "VIP", "View", "DeliveryPackages"), {
-    recursive: true,
-  });
-  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
-
+  await fs.mkdir(path.join(repoPath, "Feature", "Views"), { recursive: true });
   await fs.writeFile(
-    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "VIP", "View", "VipViewController.swift"),
-    "import UIKit\nfinal class VipViewController: UIViewController {}\n",
-    "utf8"
-  );
-  await fs.writeFile(
-    path.join(
-      repoPath,
-      "TargetShared",
-      "Sources",
-      "TargetShared",
-      "VIP",
-      "Main Vip",
-      "ViewState",
-      "VipViewState+Converter.swift"
-    ),
-    "import Foundation\nstruct VipViewStateConverter {}\n",
-    "utf8"
-  );
-  await fs.writeFile(
-    path.join(repoPath, "Modules", "VIP", "Sources", "VIP", "View", "DeliveryPackages", "DeliveryPackagesView.swift"),
-    "import SwiftUI\nstruct DeliveryPackagesView: View { var body: some View { Text(\"x\") } }\n",
-    "utf8"
-  );
-  await fs.writeFile(
-    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
-    "# skill\n",
+    path.join(repoPath, "Feature", "Views", "LegacyScreen.swift"),
+    "import UIKit\nfinal class LegacyScreen: UIViewController {}\n",
     "utf8"
   );
 
+  let llmCalls = 0;
   const llm = {
     async generateText() {
-      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
+      llmCalls += 1;
+      return JSON.stringify({
+        summary: "Migrate LegacyScreen UIKit to SwiftUI per structured story.",
+        subtasks: [
+          {
+            title: "Introduce SwiftUI host",
+            body: "Wrap or replace entry with SwiftUI.",
+            storyPoints: 2,
+            changedFiles: ["Feature/Views/LegacyScreen.swift"],
+            suggestedSkill: null,
+          },
+          {
+            title: "Remove dead UIKit paths",
+            body: "Delete obsolete code after parity.",
+            storyPoints: 1,
+            changedFiles: ["Feature/Views/LegacyScreen.swift"],
+            suggestedSkill: null,
+          },
+        ],
+      });
     },
   };
 
@@ -169,222 +154,9 @@ test("runArchitectForIssue uses deterministic planning for UIKit to SwiftUI stor
 
   const issue = {
     key: "IOS-300",
-    fields: { summary: "Discover Packages - Migrate UIKit to SwiftUI", description: "" },
-  };
-
-  const result = await runArchitectForIssue({
-    llm,
-    jira,
-    issue,
-    targetRepoPath: repoPath,
-  });
-
-  assert.ok(result.summary.includes("UIKit->SwiftUI"));
-  assert.ok(result.planItems.length >= 3);
-  assert.equal(result.planItems[0].storyPoints <= 3, true);
-  assert.ok(Array.isArray(result.planItems[0].changedFiles));
-  assert.ok(result.planItems[0].changedFiles.length > 0);
-  assert.ok(result.moduleResolution);
-  assert.ok(["high", "medium"].includes(result.moduleResolution.confidence));
-  assert.equal(
-    result.planItems.some((item) => item.suggestedSkill?.includes("uikit-to-swiftui")),
-    true
-  );
-  assert.equal(jira.planComments.length, 1);
-});
-
-test("deterministic planner respects TargetShared module hint from Jira description", async () => {
-  const repoPath = await makeTempRepo();
-  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
-
-  await fs.mkdir(path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features"), {
-    recursive: true,
-  });
-  await fs.mkdir(path.join(repoPath, "TargetShared", "Tests", "TargetSharedTests", "ASQ"), {
-    recursive: true,
-  });
-  await fs.mkdir(path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore"), {
-    recursive: true,
-  });
-  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
-
-  await fs.writeFile(
-    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "SmbBundlesViewController.swift"),
-    "import UIKit\nfinal class SmbBundlesViewController: UIViewController {}\n",
-    "utf8"
-  );
-  await fs.writeFile(
-    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "SmbBundlesViewStateConverter.swift"),
-    "import Foundation\nstruct SmbBundlesViewStateConverter {}\n",
-    "utf8"
-  );
-  await fs.writeFile(
-    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "SmbBundlesView.swift"),
-    "import SwiftUI\nstruct SmbBundlesView: View { var body: some View { Text(\"Discover packages\") } }\n",
-    "utf8"
-  );
-  await fs.writeFile(
-    path.join(repoPath, "TargetShared", "Tests", "TargetSharedTests", "ASQ", "AsqDismissState_ReducerTests.swift"),
-    "// discover packages unrelated test\n",
-    "utf8"
-  );
-  for (let index = 0; index < 30; index += 1) {
-    await fs.writeFile(
-      path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore", `Noise${index}.swift`),
-      `// Discover packages migrate UIKit to SwiftUI noise ${index}\n`,
-      "utf8"
-    );
-  }
-  await fs.writeFile(
-    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
-    "# skill\n",
-    "utf8"
-  );
-
-  const llm = {
-    async generateText() {
-      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
-    },
-  };
-
-  const jira = {
-    planComments: [],
-    async addCommentParagraphs(issueKey, text) {
-      this.planComments.push({ issueKey, text });
-    },
-  };
-
-  const issue = {
-    key: "IOS-400",
-    fields: {
-      summary: "[iOS] Discover Packages - Migrate UIKit to SwiftUI",
-      description: "Discover packages is located in TargetShared/SMB/ migrate UIKit elements to SwiftUI.",
-    },
-  };
-
-  const result = await runArchitectForIssue({
-    llm,
-    jira,
-    issue,
-    targetRepoPath: repoPath,
-  });
-
-  assert.equal(result.moduleResolution.primaryModule, "TargetShared/SMB");
-  assert.ok(
-    result.planItems
-      .flatMap((item) => item.changedFiles || [])
-      .every((filePath) => filePath.includes("TargetShared/Sources/TargetShared/SMB"))
-  );
-});
-
-test("deterministic planner fails when hinted module has no evidence", async () => {
-  const repoPath = await makeTempRepo();
-  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
-  await fs.mkdir(path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore"), {
-    recursive: true,
-  });
-  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
-
-  for (let index = 0; index < 10; index += 1) {
-    await fs.writeFile(
-      path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore", `Noise${index}.swift`),
-      `// Discover packages migrate UIKit to SwiftUI noise ${index}\n`,
-      "utf8"
-    );
-  }
-  await fs.writeFile(
-    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
-    "# skill\n",
-    "utf8"
-  );
-
-  const llm = {
-    async generateText() {
-      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
-    },
-  };
-
-  const jira = {
-    planComments: [],
-    async addCommentParagraphs(issueKey, text) {
-      this.planComments.push({ issueKey, text });
-    },
-  };
-
-  const issue = {
-    key: "IOS-401",
-    fields: {
-      summary: "[iOS] Discover Packages - Migrate UIKit to SwiftUI",
-      description: "Discover packages is located in TargetShared/Sources/TargetShared/SMB/.",
-    },
-  };
-
-  await assert.rejects(
-    () =>
-      runArchitectForIssue({
-        llm,
-        jira,
-        issue,
-        targetRepoPath: repoPath,
-      }),
-    /Low confidence module resolution/
-  );
-});
-
-test("deterministic planner seeds evidence from hinted root path", async () => {
-  const repoPath = await makeTempRepo();
-  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
-
-  await fs.mkdir(path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features"), {
-    recursive: true,
-  });
-  await fs.mkdir(path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore"), {
-    recursive: true,
-  });
-  await fs.mkdir(path.join(repoPath, ".claude", "skills", "uikit-to-swiftui"), { recursive: true });
-
-  await fs.writeFile(
-    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "BundlesViewController.swift"),
-    "import UIKit\nfinal class BundlesViewController: UIViewController {}\n",
-    "utf8"
-  );
-  await fs.writeFile(
-    path.join(repoPath, "TargetShared", "Sources", "TargetShared", "SMB", "Features", "BundlesFeatureState.swift"),
-    "import Foundation\nstruct BundlesFeatureState {}\n",
-    "utf8"
-  );
-  for (let index = 0; index < 20; index += 1) {
-    await fs.writeFile(
-      path.join(repoPath, "MarktplaatsCore", "Sources", "MarktplaatsCore", `Noise${index}.swift`),
-      `// discover packages migrate uikit swiftui noise ${index}\n`,
-      "utf8"
-    );
-  }
-  await fs.writeFile(
-    path.join(repoPath, ".claude", "skills", "uikit-to-swiftui", "SKILL.md"),
-    "# skill\n",
-    "utf8"
-  );
-
-  const llm = {
-    async generateText() {
-      throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
-    },
-  };
-
-  const jira = {
-    planComments: [],
-    async addCommentParagraphs(issueKey, text) {
-      this.planComments.push({ issueKey, text });
-    },
-  };
-
-  const issue = {
-    key: "IOS-402",
     fields: {
       summary: "Discover Packages - Migrate UIKit to SwiftUI",
-      description:
-        "Discover packages is located in TargetShared/Sources/TargetShared/SMB/ Migrate all UKIt related elements to SwiftUI using HorizonUI components.",
+      description: "Agent folder: Feature/Views\nScope per claude.md.",
     },
   };
 
@@ -395,6 +167,7 @@ test("deterministic planner seeds evidence from hinted root path", async () => {
     targetRepoPath: repoPath,
   });
 
-  assert.equal(result.moduleResolution.primaryModule, "TargetShared/SMB");
-  assert.ok(result.planItems.length > 0);
+  assert.equal(llmCalls, 1);
+  assert.equal(result.planItems.length, 2);
+  assert.equal(jira.planComments.length, 1);
 });

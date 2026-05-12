@@ -1,7 +1,5 @@
 import { buildIssueImplementationContext } from "../storyImplementationContext.js";
 import { runArchitect } from "../../agents/architect.js";
-import { buildUIKitToSwiftUISubtasks } from "./deterministicPlanner.js";
-import { resolvePrimaryModule, isUIKitToSwiftUIMigrationStory } from "./moduleResolution.js";
 import { formatSubtaskDescription } from "./subtaskDescription.js";
 
 function buildArchitectPlanComment(summary, planItems) {
@@ -27,25 +25,11 @@ export async function runArchitectForIssue({ llm, jira, issue, targetRepoPath })
     );
   }
 
-  const resolvedModule = resolvePrimaryModule(issue, implementationContext);
-  const architectResult = isUIKitToSwiftUIMigrationStory(issue)
-    ? (() => {
-        if (!resolvedModule.primary || resolvedModule.confidence === "low") {
-          const topCandidates = (resolvedModule.ranked || [])
-            .slice(0, 3)
-            .map((item) => `${item.moduleName}:${item.score}`)
-            .join(", ");
-          throw new Error(
-            `Low confidence module resolution for UIKit->SwiftUI story. ${resolvedModule.reason} Top candidates: ${topCandidates || "none"}`
-          );
-        }
-        return buildUIKitToSwiftUISubtasks(issue, implementationContext, resolvedModule);
-      })()
-    : await runArchitect({
-        llm,
-        issue,
-        implementationContext,
-      });
+  const architectResult = await runArchitect({
+    llm,
+    issue,
+    implementationContext,
+  });
 
   const planItems = (architectResult.subtasks || []).map((subtask) => ({
     title: subtask.title,
@@ -60,7 +44,6 @@ export async function runArchitectForIssue({ llm, jira, issue, targetRepoPath })
 
   return {
     summary: architectResult.summary,
-    moduleResolution: architectResult.moduleResolution || null,
     implementationContext,
     planItems,
   };

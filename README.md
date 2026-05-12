@@ -17,7 +17,8 @@ Given a Jira issue, the pipeline coordinates role-based handoff:
    - reads the Jira issue (summary + description) and scans the repo for implementation evidence
    - posts a structured plan as a Jira comment on that issue and saves `planItems` in run state (no Sub-task issues)
 2. **Developer**
-   - produces implementation plan + patch proposal for the story, using the architect plan stored for that issue
+   - **Two-step (recommended):** `POST /pipeline/developer-plan` saves a draft (`developerDraft` in run state) and comments the plan; after human approval, `POST /pipeline/developer-execute` generates the patch and clears the draft.
+   - **One-shot (legacy):** `POST /pipeline/run-developer` runs a single LLM call (plan + patch together).
 3. **Tester**
    - evaluates a diff and returns PASS/FAIL with test notes
 4. **Reviewer**
@@ -92,11 +93,23 @@ Behavior:
 - gathers story-specific implementation evidence from the codebase
 - produces a plan (LLM JSON `subtasks` internally, exposed as `planItems` without Jira keys)
 - comments the plan on the **same** issue
-- persists `architect.planItems` in run state for `POST /pipeline/run-developer`
+- persists `architect.planItems` in run state for developer steps (`developer-plan`, `developer-execute`, or `run-developer`)
+
+### `POST /pipeline/developer-plan`
+
+Developer **step 1**: plan + risks + test stubs only (one LLM call). Requires existing `architect.planItems` from `create-subtasks`. Persists `developerDraft` and posts a Jira comment with approval instructions.
+
+Request body: same shape as `run-developer` (`issueKey`, optional `targetRepoPath`).
+
+### `POST /pipeline/developer-execute`
+
+Developer **step 2**: requires a saved `developerDraft` from `developer-plan`. One LLM call for `patchProposal` only. Merges into `developer` in run state, clears `developerDraft`, posts a Jira comment.
+
+Request body: same as above.
 
 ### `POST /pipeline/run-developer`
 
-Runs the developer for the **story** (`issueKey` only). Uses the latest architect `planItems` from run state plus repo docs context.
+Runs the developer in **one** LLM call (full JSON: plan + patch + notes). Same run-state and Jira behavior as before. Use when you do not need a human approval gate between plan and patch.
 
 Request body:
 
@@ -106,6 +119,42 @@ Request body:
   "targetRepoPath": "/absolute/path/to/target/repo"
 }
 ```
+
+Manual two-step example (same logic Jira Automation would call later):
+
+```bash
+curl -sS -X POST "http://localhost:3000/pipeline/developer-plan" \
+  -H "Content-Type: application/json" \
+  -d '{"issueKey":"IOS-123"}'
+
+curl -sS -X POST "http://localhost:3000/pipeline/developer-execute" \
+  -H "Content-Type: application/json" \
+  -d '{"issueKey":"IOS-123"}'
+```
+
+### `POST /hooks/jira/comment`
+
+Single entrypoint for **comment-shaped** triggers (returns `202` quickly, work runs async). Use the same JSON from `curl` while webhooks are absent.
+
+Request body:
+
+```json
+{
+  "issueKey": "IOS-123",
+  "commentBody": "@developer plan story",
+  "targetRepoPath": "/optional/absolute/repo"
+}
+```
+
+Recognized `commentBody` / `comment` values (case-insensitive):
+
+| Intent | Example phrase |
+|--------|----------------|
+| Architect refine | contains `@architect` and word `refine` |
+| Developer plan | contains `@developer` and word `plan`, but **not** the execute phrase below |
+| Developer execute | contains `@developer`, and `plan is approved` or `plan was approved`, and `start implementation` |
+
+Execute is checked **before** plan so comments like “plan is approved … start implementation” do not match plan-only.
 
 ### `POST /pipeline/run-tester`
 
@@ -143,7 +192,4 @@ Run tests:
 npm test
 ```
 
-The suite includes architect-focused tests for:
-
-- JSON parsing and repair behavior
-- architect plan flow (LLM and deterministic UIKit→SwiftUI paths)
+The suite includes tests for JSON repair, architect plan flow, Jira comment hook resolution (`jiraCommentHooks`), and developer agents.

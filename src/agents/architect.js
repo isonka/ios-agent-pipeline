@@ -1,4 +1,5 @@
 import { jiraDescriptionPlain } from "../jira/jiraDescriptionPlain.js";
+import { generateJsonWithRepair } from "./llmJson.js";
 
 const ARCHITECT_SYSTEM_PROMPT = "You are an iOS Architect agent. Output only valid JSON.";
 const SUBTASK_SCHEMA =
@@ -30,64 +31,6 @@ function buildArchitectPrompt(issue, implementationContext) {
   return parts.filter(Boolean).join("\n");
 }
 
-function extractJsonCandidate(text) {
-  if (!text) return "";
-  const trimmed = text.trim();
-
-  if (trimmed.startsWith("```")) {
-    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenced?.[1]) return fenced[1].trim();
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return trimmed.slice(firstBrace, lastBrace + 1);
-  }
-
-  return trimmed;
-}
-
-function parseJsonResponse(text, failurePrefix) {
-  const jsonCandidate = extractJsonCandidate(text);
-  try {
-    return JSON.parse(jsonCandidate);
-  } catch {
-    const preview = String(text || "").slice(0, 300).replace(/\s+/g, " ");
-    throw new Error(`${failurePrefix}. Preview: ${preview}`);
-  }
-}
-
-async function generateJsonWithRepair({
-  llm,
-  userPrompt,
-  failurePrefix,
-  repairSchemaDescription,
-}) {
-  const firstText = await llm.generateText({
-    systemPrompt: ARCHITECT_SYSTEM_PROMPT,
-    userPrompt,
-    temperature: 0,
-  });
-
-  try {
-    return parseJsonResponse(firstText, failurePrefix);
-  } catch {
-    const repairedText = await llm.generateText({
-      systemPrompt: ARCHITECT_SYSTEM_PROMPT,
-      userPrompt: [
-        "Fix to strict JSON.",
-        `SCHEMA ${repairSchemaDescription}`,
-        "No prose. No markdown.",
-        "INPUT",
-        firstText,
-      ].join("\n"),
-      temperature: 0,
-    });
-    return parseJsonResponse(repairedText, failurePrefix);
-  }
-}
-
 export async function runArchitect({ llm, issue, implementationContext }) {
   const evidencePaths = new Set(
     (implementationContext?.matches || []).map((item) => String(item.path || "").trim()).filter(Boolean)
@@ -95,6 +38,7 @@ export async function runArchitect({ llm, issue, implementationContext }) {
   const skillDocs = new Set((implementationContext?.skillDocs || []).map((item) => String(item || "").trim()));
   const parsed = await generateJsonWithRepair({
     llm,
+    systemPrompt: ARCHITECT_SYSTEM_PROMPT,
     userPrompt: buildArchitectPrompt(issue, implementationContext),
     failurePrefix: "Architect returned non-JSON content",
     repairSchemaDescription: SUBTASK_SCHEMA,

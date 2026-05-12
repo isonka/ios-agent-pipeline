@@ -5,12 +5,16 @@ import { resolveTargetRepoPath } from "./services/repoPath.js";
 import { buildProjectContext } from "./services/projectContext.js";
 import { loadRunState, saveRunState } from "./services/runStore.js";
 import { runArchitectForIssue } from "./services/pipeline/architectFlow.js";
+import {
+  runDeveloperFullPipeline,
+  runDeveloperPlanPipeline,
+  runDeveloperExecutePipeline,
+} from "./services/pipeline/developerStages.js";
 import { BedrockClaudeClient } from "./llm/bedrockClaude.js";
 import { JiraClient } from "./integrations/jiraClient.js";
-import { runDeveloper } from "./agents/developer.js";
 import { runTester } from "./agents/tester.js";
 import { runReviewer } from "./agents/reviewer.js";
-import { shouldTriggerArchitectRefineFromComment } from "./agents/architectRefineStory.js";
+import { resolveJiraCommentHook } from "./agents/jiraCommentHooks.js";
 import { runArchitectRefineJob } from "./hooks/runArchitectRefineJob.js";
 
 const app = express();
@@ -63,27 +67,6 @@ async function loadIssueAndContext({ jira, issueKey, targetRepoPath, targetFallb
   return { issue, context, resolvedRepoPath };
 }
 
-function formatPlanItemsForDeveloperPrompt(planItems) {
-  if (!Array.isArray(planItems) || planItems.length === 0) {
-    return "(No architect plan in run state. POST /pipeline/create-subtasks for this issue first.)";
-  }
-  return planItems
-    .map((item, index) => {
-      const files = (item.changedFiles || []).map((filePath) => `- ${filePath}`).join("\n");
-      return [
-        `[${index + 1}] ${item.title}`,
-        item.body || "",
-        `storyPoints: ${item.storyPoints}`,
-        "changedFiles:",
-        files || "- (none)",
-        item.suggestedSkill ? `suggestedSkill: ${item.suggestedSkill}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-    })
-    .join("\n\n---\n\n");
-}
-
 app.post("/pipeline/create-subtasks", async (req, res) => {
   try {
     const { issueKey, targetRepoPath } = req.body || {};
@@ -111,7 +94,6 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       architect: {
         summary: architectResult.summary,
         planItems: architectResult.planItems,
-        moduleResolution: architectResult.moduleResolution,
       },
       implementationContext: architectResult.implementationContext,
       updatedAt: new Date().toISOString(),
@@ -121,7 +103,6 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       issueKey: issue.key,
       targetRepoPath: resolvedRepoPath,
       summary: architectResult.summary,
-      moduleResolution: architectResult.moduleResolution,
       implementationContext: architectResult.implementationContext,
       planItems: architectResult.planItems,
     });
@@ -130,6 +111,7 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
   }
 });
 
+/** One LLM call: plan + patch together (quick / legacy). */
 app.post("/pipeline/run-developer", async (req, res) => {
   try {
     const { issueKey, targetRepoPath } = req.body || {};
@@ -137,44 +119,62 @@ app.post("/pipeline/run-developer", async (req, res) => {
 
     const config = envConfig();
     const deps = createDependencies(config);
-    const { issue, context, resolvedRepoPath } = await loadIssueAndContext({
+    const result = await runDeveloperFullPipeline({
+      llm: deps.llm,
       jira: deps.jira,
+      runStateDir: config.runStateDir,
       issueKey,
       targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
     });
 
-    const runState = await loadRunState(config.runStateDir, issueKey);
-    const architectPlanText = formatPlanItemsForDeveloperPrompt(runState?.architect?.planItems);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    const developerResult = await runDeveloper({
+/** Step 1 of 2: developer plan draft (manual curl / same logic as hook). */
+app.post("/pipeline/developer-plan", async (req, res) => {
+  try {
+    const { issueKey, targetRepoPath } = req.body || {};
+    if (!issueKey) return jsonError(res, 400, "issueKey is required");
+
+    const config = envConfig();
+    const deps = createDependencies(config);
+    const result = await runDeveloperPlanPipeline({
       llm: deps.llm,
-      issue,
-      architectPlanText,
-      context,
+      jira: deps.jira,
+      runStateDir: config.runStateDir,
+      issueKey,
+      targetRepoPath,
+      targetFallback: config.targetProjectPathFallback,
     });
 
-    const updatedState = {
-      ...(runState || {}),
-      issueKey,
-      targetRepoPath: resolvedRepoPath,
-      developer: {
-        ...developerResult,
-      },
-      updatedAt: new Date().toISOString(),
-    };
-    await saveRunState(config.runStateDir, issueKey, updatedState);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    await deps.jira.addComment(
-      issueKey,
-      `Developer output for ${issueKey} (uses architect plan from run state).\n\n${developerResult.implementationPlan || ""}`
-    );
+/** Step 2 of 2: patch after approved draft (manual curl / same logic as hook). */
+app.post("/pipeline/developer-execute", async (req, res) => {
+  try {
+    const { issueKey, targetRepoPath } = req.body || {};
+    if (!issueKey) return jsonError(res, 400, "issueKey is required");
 
-    res.status(200).json({
+    const config = envConfig();
+    const deps = createDependencies(config);
+    const result = await runDeveloperExecutePipeline({
+      llm: deps.llm,
+      jira: deps.jira,
+      runStateDir: config.runStateDir,
       issueKey,
-      targetRepoPath: resolvedRepoPath,
-      ...developerResult,
+      targetRepoPath,
+      targetFallback: config.targetProjectPathFallback,
     });
+
+    res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -280,33 +280,55 @@ app.post("/hooks/jira/comment", (req, res) => {
     return res.status(400).json({ error: "issueKey is required" });
   }
 
-  if (!shouldTriggerArchitectRefineFromComment(commentBody)) {
+  const hook = resolveJiraCommentHook(commentBody);
+  if (!hook) {
     return res.status(200).json({
       status: "ignored",
-      reason: "Comment does not request @architect refine.",
+      reason: "No matching command. Expected @architect refine, @developer with plan, or @developer plan is approved + start implementation.",
     });
   }
 
   const targetRepoPath = req.body?.targetRepoPath || "";
 
-  res.status(202).json({ status: "accepted", issueKey });
+  res.status(202).json({ status: "accepted", issueKey, hook });
 
   void (async () => {
     const cfg = envConfig();
     const deps = createDependencies(cfg);
+    const logPrefix = `[hooks/jira/comment] ${hook} ${issueKey}`;
     try {
-      console.log(`[hooks/jira/comment] architect refine start ${issueKey}`);
-      await runArchitectRefineJob({
-        jira: deps.jira,
-        llm: deps.llm,
-        issueKey,
-        targetRepoPath,
-        targetFallback: cfg.targetProjectPathFallback,
-      });
-      console.log(`[hooks/jira/comment] architect refine done ${issueKey}`);
+      console.log(`${logPrefix} start`);
+      if (hook === "architect_refine") {
+        await runArchitectRefineJob({
+          jira: deps.jira,
+          llm: deps.llm,
+          issueKey,
+          targetRepoPath,
+          targetFallback: cfg.targetProjectPathFallback,
+        });
+      } else if (hook === "developer_plan") {
+        await runDeveloperPlanPipeline({
+          llm: deps.llm,
+          jira: deps.jira,
+          runStateDir: cfg.runStateDir,
+          issueKey,
+          targetRepoPath,
+          targetFallback: cfg.targetProjectPathFallback,
+        });
+      } else if (hook === "developer_execute") {
+        await runDeveloperExecutePipeline({
+          llm: deps.llm,
+          jira: deps.jira,
+          runStateDir: cfg.runStateDir,
+          issueKey,
+          targetRepoPath,
+          targetFallback: cfg.targetProjectPathFallback,
+        });
+      }
+      console.log(`${logPrefix} done`);
     } catch (err) {
-      console.error(`[hooks/jira/comment] architect refine failed ${issueKey}:`, err.message || err);
-      await deps.jira.addCommentParagraphs(issueKey, `Architect refine failed: ${err.message}`).catch((postErr) => {
+      console.error(`${logPrefix} failed:`, err.message || err);
+      await deps.jira.addCommentParagraphs(issueKey, `${hook} failed: ${err.message}`).catch((postErr) => {
         console.error(`[hooks/jira/comment] could not post failure comment on ${issueKey}:`, postErr.message || postErr);
       });
     }
@@ -320,7 +342,7 @@ async function start() {
     console.log(`iOS Agent Pipeline listening on :${config.port}`);
     console.log(`LLM provider: bedrock`);
     console.log(`Bedrock model: ${config.bedrockModelId}`);
-    console.log("Jira architect refine webhook: POST /hooks/jira/comment");
+    console.log("Jira comment hook (manual curl ok): POST /hooks/jira/comment — @architect refine | @developer plan | @developer plan is approved start implementation");
   });
 }
 
