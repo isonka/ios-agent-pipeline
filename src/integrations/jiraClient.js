@@ -30,6 +30,37 @@ export class JiraClient {
     return response.json();
   }
 
+  async updateIssueDescription(issueKey, plainText) {
+    const chunks = String(plainText || "")
+      .split(/\n\n+/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)
+      .map((chunk) => chunk.slice(0, 15000));
+
+    const content =
+      chunks.length > 0
+        ? chunks.map((chunk) => ({
+            type: "paragraph",
+            content: [{ type: "text", text: chunk.replace(/\u0000/g, "") }],
+          }))
+        : [{ type: "paragraph", content: [{ type: "text", text: "" }] }];
+
+    return this.request("PUT", `/rest/api/3/issue/${encodeURIComponent(issueKey)}`, {
+      fields: {
+        description: {
+          type: "doc",
+          version: 1,
+          content,
+        },
+      },
+    });
+  }
+
+  async listIssueComments(issueKey, maxResults = 80) {
+    const key = encodeURIComponent(issueKey);
+    return this.request("GET", `/rest/api/3/issue/${key}/comment?maxResults=${maxResults}`);
+  }
+
   async getIssue(issueKey) {
     return this.request("GET", `/rest/api/3/issue/${issueKey}`);
   }

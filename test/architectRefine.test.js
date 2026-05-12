@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 
 import { jiraDescriptionPlain } from "../src/jira/jiraDescriptionPlain.js";
-import { extractAgentFolderRelPath, stripAgentFolderLines } from "../src/services/agentFolderFromDescription.js";
+import { extractAgentFolderRelPath, extractAgentFolderLine, stripAgentFolderLines } from "../src/services/agentFolderFromDescription.js";
 import { loadClaudeMdFromRepoFolder } from "../src/services/claudeMdLoader.js";
 import {
   shouldTriggerArchitectRefineFromComment,
@@ -40,6 +40,10 @@ test("extractAgentFolderRelPath finds line", () => {
 
 test("extractAgentFolderRelPath is case insensitive", () => {
   assert.equal(extractAgentFolderRelPath("AGENT FOLDER: foo/bar"), "foo/bar");
+});
+
+test("extractAgentFolderLine returns full line", () => {
+  assert.equal(extractAgentFolderLine("x\nAgent folder: Mod/Foo\nz"), "Agent folder: Mod/Foo");
 });
 
 test("shouldTriggerArchitectRefineFromComment requires @architect and refine word", () => {

@@ -1,34 +1,32 @@
+import { jiraDescriptionPlain } from "../../jira/jiraDescriptionPlain.js";
+import { stripAgentFolderLines } from "../agentFolderFromDescription.js";
 import { resolveTargetRepoPath } from "../repoPath.js";
 import { buildProjectContext } from "../projectContext.js";
 import { loadRunState, saveRunState } from "../runStore.js";
 import { runDeveloper, runDeveloperPlan, runDeveloperExecute } from "../../agents/developer.js";
 
-export function formatPlanItemsForDeveloperPrompt(planItems) {
-  if (!Array.isArray(planItems) || planItems.length === 0) {
-    return "(No architect plan in run state. POST /pipeline/create-subtasks for this issue first.)";
+/**
+ * Planning text for developer LLM: **Jira description only** (summary + description with Agent folder line stripped).
+ * Refined story must live in the issue description (use @architect approved after refine).
+ */
+export function buildPlanningInputFromIssue(issue) {
+  const summary = String(issue?.fields?.summary || "").trim();
+  const descPlain = stripAgentFolderLines(jiraDescriptionPlain(issue?.fields?.description)).trim();
+  if (!summary && !descPlain) {
+    throw new Error(
+      "Issue has empty summary and description. Add Jira fields, or run @architect refine then @architect approved to copy the refined story into the description."
+    );
   }
-  return planItems
-    .map((item, index) => {
-      const files = (item.changedFiles || []).map((filePath) => `- ${filePath}`).join("\n");
-      return [
-        `[${index + 1}] ${item.title}`,
-        item.body || "",
-        `storyPoints: ${item.storyPoints}`,
-        "changedFiles:",
-        files || "- (none)",
-        item.suggestedSkill ? `suggestedSkill: ${item.suggestedSkill}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-    })
-    .join("\n\n---\n\n");
-}
 
-function missingArchitectPlanMessage(architectPlanText) {
-  return (
-    typeof architectPlanText === "string" &&
-    architectPlanText.includes("No architect plan in run state")
-  );
+  return [
+    "Planning input: Jira summary + description (issue description; routing line removed when present).",
+    "",
+    "**Summary**",
+    summary || "(none)",
+    "",
+    "**Description**",
+    descPlain || "(none)",
+  ].join("\n");
 }
 
 /**
@@ -46,15 +44,12 @@ export async function runDeveloperPlanPipeline({
   const issue = await jira.getIssue(issueKey);
   const context = await buildProjectContext(resolvedRepoPath);
   const runState = await loadRunState(runStateDir, issueKey);
-  const architectPlanText = formatPlanItemsForDeveloperPrompt(runState?.architect?.planItems);
-  if (missingArchitectPlanMessage(architectPlanText)) {
-    throw new Error("No architect planItems in run state. Run POST /pipeline/create-subtasks for this issue first.");
-  }
+  const storyScope = buildPlanningInputFromIssue(issue);
 
   const draft = await runDeveloperPlan({
     llm,
     issue,
-    architectPlanText,
+    architectPlanText: storyScope,
     context,
   });
 
@@ -110,15 +105,12 @@ export async function runDeveloperExecutePipeline({
     );
   }
 
-  const architectPlanText = formatPlanItemsForDeveloperPrompt(runState?.architect?.planItems);
-  if (missingArchitectPlanMessage(architectPlanText)) {
-    throw new Error("No architect planItems in run state. Run POST /pipeline/create-subtasks for this issue first.");
-  }
+  const storyScope = buildPlanningInputFromIssue(issue);
 
   const executeResult = await runDeveloperExecute({
     llm,
     issue,
-    architectPlanText,
+    architectPlanText: storyScope,
     developerDraft: draft,
     context,
   });
@@ -161,7 +153,7 @@ export async function runDeveloperExecutePipeline({
 }
 
 /**
- * Single-call developer (legacy / quick path): one LLM, full JSON.
+ * Single-call developer: one LLM, full JSON.
  */
 export async function runDeveloperFullPipeline({
   llm,
@@ -175,12 +167,12 @@ export async function runDeveloperFullPipeline({
   const issue = await jira.getIssue(issueKey);
   const context = await buildProjectContext(resolvedRepoPath);
   const runState = await loadRunState(runStateDir, issueKey);
-  const architectPlanText = formatPlanItemsForDeveloperPrompt(runState?.architect?.planItems);
+  const storyScope = buildPlanningInputFromIssue(issue);
 
   const developerResult = await runDeveloper({
     llm,
     issue,
-    architectPlanText,
+    architectPlanText: storyScope,
     context,
   });
 
@@ -196,7 +188,7 @@ export async function runDeveloperFullPipeline({
 
   await jira.addComment(
     issueKey,
-    `Developer output for ${issueKey} (uses architect plan from run state).\n\n${developerResult.implementationPlan || ""}`
+    `Developer output for ${issueKey}.\n\n${developerResult.implementationPlan || ""}`
   );
 
   return {

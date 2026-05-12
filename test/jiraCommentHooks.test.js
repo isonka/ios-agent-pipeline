@@ -31,3 +31,12 @@ test("resolveJiraCommentHook ignores bare @developer", () => {
 test("resolveJiraCommentHook architect wins over @developer in same text", () => {
   assert.equal(resolveJiraCommentHook("@architect refine\n@developer plan"), "architect_refine");
 });
+
+test("resolveJiraCommentHook architect approved", () => {
+  assert.equal(resolveJiraCommentHook("@architect approved"), "architect_approved");
+  assert.equal(resolveJiraCommentHook("Please @architect approved"), "architect_approved");
+});
+
+test("resolveJiraCommentHook refine wins when both refine and approved words appear", () => {
+  assert.equal(resolveJiraCommentHook("@architect refine then approved later"), "architect_refine");
+});

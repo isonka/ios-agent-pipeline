@@ -17,7 +17,7 @@ function buildDeveloperBaseParts({ issue, architectPlanText, context }) {
     `ISSUE ${issue.key}: ${issue.fields?.summary || ""}`,
     description ? `DESCRIPTION\n${description}` : "",
     "",
-    "ARCHITECT_PLAN",
+    "STORY_SCOPE",
     architectPlanText,
     "",
     "DOCS",

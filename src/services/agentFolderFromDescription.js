@@ -23,6 +23,17 @@ function normalizeRelPath(raw) {
     .replace(/^\/+/, "");
 }
 
+/** First line matching `Agent folder: ...` (trimmed), or null. */
+export function extractAgentFolderLine(descriptionPlain) {
+  const lines = String(descriptionPlain || "").split(/\r?\n/);
+  for (const line of lines) {
+    if (/^\s*Agent\s+folder\s*:\s*.+$/i.test(line)) {
+      return line.trim();
+    }
+  }
+  return null;
+}
+
 /** Remove `Agent folder: ...` lines so routing metadata is not sent to the LLM as story text. */
 export function stripAgentFolderLines(descriptionPlain) {
   return String(descriptionPlain || "")
