@@ -59,6 +59,5 @@ export function envConfig() {
     jiraProjectKey: process.env.JIRA_PROJECT_KEY,
     jiraSubtaskTargetStatus: process.env.JIRA_SUBTASK_TARGET_STATUS || "",
     runStateDir: process.env.PIPELINE_RUN_STATE_DIR || ".data/pipeline-runs",
-    jiraWebhookSecret: process.env.JIRA_WEBHOOK_SECRET || "",
   };
 }

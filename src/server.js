@@ -314,13 +314,8 @@ app.post("/pipeline/run-reviewer", async (req, res) => {
 });
 
 app.post("/hooks/jira/comment", (req, res) => {
+  // No shared-secret check yet (local-first). Add auth before exposing this URL on the internet.
   const config = envConfig();
-  if (config.jiraWebhookSecret) {
-    if (req.body?.secret !== config.jiraWebhookSecret) {
-      return res.status(401).json({ error: "Invalid or missing secret" });
-    }
-  }
-
   const issueKey = req.body?.issueKey || req.body?.issue;
   const commentBody = req.body?.commentBody ?? req.body?.comment ?? "";
   if (!issueKey) {
@@ -342,6 +337,7 @@ app.post("/hooks/jira/comment", (req, res) => {
     const cfg = envConfig();
     const deps = createDependencies(cfg);
     try {
+      console.log(`[hooks/jira/comment] architect refine start ${issueKey}`);
       await runArchitectRefineJob({
         jira: deps.jira,
         llm: deps.llm,
@@ -349,8 +345,12 @@ app.post("/hooks/jira/comment", (req, res) => {
         targetRepoPath,
         targetFallback: cfg.targetProjectPathFallback,
       });
+      console.log(`[hooks/jira/comment] architect refine done ${issueKey}`);
     } catch (err) {
-      await deps.jira.addCommentParagraphs(issueKey, `Architect refine failed: ${err.message}`).catch(() => {});
+      console.error(`[hooks/jira/comment] architect refine failed ${issueKey}:`, err.message || err);
+      await deps.jira.addCommentParagraphs(issueKey, `Architect refine failed: ${err.message}`).catch((postErr) => {
+        console.error(`[hooks/jira/comment] could not post failure comment on ${issueKey}:`, postErr.message || postErr);
+      });
     }
   })();
 });
@@ -363,11 +363,6 @@ async function start() {
     console.log(`LLM provider: bedrock`);
     console.log(`Bedrock model: ${config.bedrockModelId}`);
     console.log("Jira architect refine webhook: POST /hooks/jira/comment");
-    if (!config.jiraWebhookSecret) {
-      console.warn(
-        "JIRA_WEBHOOK_SECRET is unset: webhook accepts requests without body.secret (local/dev only). Set secret before exposing this URL publicly."
-      );
-    }
   });
 }
 
