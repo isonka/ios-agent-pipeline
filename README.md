@@ -8,10 +8,10 @@ Server entrypoint: `src/server.js`
 
 1. **Architect (refine)** — `POST /hooks/jira/comment` with `@architect refine` (or equivalent) reads `claude.md` from the path in the issue description (`Agent folder: …`) and posts a **refined story** as a Jira comment.
 2. **Architect (approved)** — When the story is good, `@architect approved` (or `POST /pipeline/architect-approved`) copies the **latest** refined-story comment into the **issue description** (keeps an existing `Agent folder: …` line at the top when it is already in the description). Developer always reads **summary + description** (Agent folder line stripped for the LLM), not comments.
-3. **Developer** — **Two-step:** `POST /pipeline/developer-plan` then `POST /pipeline/developer-execute` (or the matching `@developer` hook phrases). **One-shot:** `POST /pipeline/run-developer`.
+3. **Developer** — **Plan path:** `POST /pipeline/developer-plan` (or `@developer plan`) posts the plan, runs **architect review** of that plan, and on **approve** runs **implementation** automatically unless disabled in the request body. **One-shot:** `POST /pipeline/run-developer`. **Manual execute:** `POST /pipeline/developer-execute` if you skipped review or turned off auto-execute.
 4. **Tester** / **Reviewer** — evaluate a supplied diff.
 
-Run artifacts are persisted in `.data/pipeline-runs/<ISSUE_KEY>.json`.
+Run artifacts: **tester** / **reviewer** may still persist under `.data/pipeline-runs/<ISSUE_KEY>.json`. **Developer** plan/execute state lives only in **Jira comments** (see developer-plan comment body).
 
 ## Requirements
 
@@ -77,17 +77,38 @@ Request body:
 
 ### `POST /pipeline/developer-plan`
 
-Developer **step 1**: plan + risks + test stubs (one LLM call). Uses **Jira summary + description** only (`Agent folder` stripped in the prompt). Requires non-empty summary/description after you have promoted the refined story with **architect-approved** (or manual edit).
+Developer **step 1**: posts the plan Jira comment (human text + JSON trailer). Then an **architect LLM** reviews that plan against the story (`runArchitectReviewDeveloperPlan`). A second Jira comment records **APPROVE** or **REJECT** plus a short reason.
 
-Request body: `issueKey`, optional `targetRepoPath`.
+- If the architect **approves**, the server **automatically runs** the same work as `POST /pipeline/developer-execute` (patch + implementation comment), unless you opt out (see below).
+- If the architect **rejects**, no implementation run; fix the story/plan and call developer-plan again.
+
+Request body:
+
+```json
+{
+  "issueKey": "IOS-123",
+  "targetRepoPath": "/optional/repo",
+  "skipArchitectReview": false,
+  "autoExecuteOnArchitectApprove": true,
+  "autoArchitectApprovedOnPlanReview": true
+}
+```
+
+- **`skipArchitectReview`**: if `true`, only the developer plan comment is posted (legacy manual flow: you review in Jira yourself, then call `developer-execute` or the hook).
+- **`autoExecuteOnArchitectApprove`**: if `false` and the architect still approves, you get the approve comment but **no** automatic patch; call `developer-execute` yourself. Defaults to **true** when omitted.
+- **`autoArchitectApprovedOnPlanReview`**: if `true` (default), after an **approve** the server also runs the same logic as **`POST /pipeline/architect-approved`** (latest refine comment → issue description) before generating the patch; if that step fails (e.g. no refine comment yet), a short Jira note is posted and **implementation still runs**.
+
+The same options are accepted on **`POST /hooks/jira/comment`** when the comment triggers developer plan (pass them in the JSON body next to `commentBody`).
 
 ### `POST /pipeline/developer-execute`
 
-Developer **step 2**: requires `developerDraft` from `developer-plan`. One LLM call for `patchProposal`. Re-reads the issue description for context.
+Developer **step 2**: reads the **latest** developer plan comment (same marker + JSON), runs patch LLM, posts the implementation comment. **No run-state draft file.**
+
+Request body: `issueKey`, optional `targetRepoPath`.
 
 ### `POST /pipeline/run-developer`
 
-One LLM call: full developer JSON (plan + patch + notes).
+One LLM call: full developer JSON (plan + patch + notes). Jira comment + HTTP response only; **no** developer entry in run-state JSON.
 
 ### `POST /hooks/jira/comment`
 

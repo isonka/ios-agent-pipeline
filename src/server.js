@@ -78,7 +78,6 @@ app.post("/pipeline/run-developer", async (req, res) => {
     const result = await runDeveloperFullPipeline({
       llm: deps.llm,
       jira: deps.jira,
-      runStateDir: config.runStateDir,
       issueKey,
       targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
@@ -101,10 +100,14 @@ app.post("/pipeline/developer-plan", async (req, res) => {
     const result = await runDeveloperPlanPipeline({
       llm: deps.llm,
       jira: deps.jira,
-      runStateDir: config.runStateDir,
       issueKey,
       targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
+      options: {
+        skipArchitectReview: Boolean(req.body?.skipArchitectReview),
+        autoExecuteOnArchitectApprove: req.body?.autoExecuteOnArchitectApprove !== false,
+        autoArchitectApprovedOnPlanReview: req.body?.autoArchitectApprovedOnPlanReview !== false,
+      },
     });
 
     res.status(200).json(result);
@@ -145,7 +148,6 @@ app.post("/pipeline/developer-execute", async (req, res) => {
     const result = await runDeveloperExecutePipeline({
       llm: deps.llm,
       jira: deps.jira,
-      runStateDir: config.runStateDir,
       issueKey,
       targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
@@ -267,6 +269,7 @@ app.post("/hooks/jira/comment", (req, res) => {
   }
 
   const targetRepoPath = req.body?.targetRepoPath || "";
+  const hookBody = req.body || {};
 
   res.status(202).json({ status: "accepted", issueKey, hook });
 
@@ -295,16 +298,19 @@ app.post("/hooks/jira/comment", (req, res) => {
         await runDeveloperPlanPipeline({
           llm: deps.llm,
           jira: deps.jira,
-          runStateDir: cfg.runStateDir,
           issueKey,
           targetRepoPath,
           targetFallback: cfg.targetProjectPathFallback,
+          options: {
+            skipArchitectReview: Boolean(hookBody.skipArchitectReview),
+            autoExecuteOnArchitectApprove: hookBody.autoExecuteOnArchitectApprove !== false,
+            autoArchitectApprovedOnPlanReview: hookBody.autoArchitectApprovedOnPlanReview !== false,
+          },
         });
       } else if (hook === "developer_execute") {
         await runDeveloperExecutePipeline({
           llm: deps.llm,
           jira: deps.jira,
-          runStateDir: cfg.runStateDir,
           issueKey,
           targetRepoPath,
           targetFallback: cfg.targetProjectPathFallback,
