@@ -35,13 +35,12 @@ export class JiraClient {
   }
 
   async addComment(issueKey, text) {
+    // Jira POST /issue/{key}/comment expects top-level { body: <ADF document> } (single "body").
     return this.request("POST", `/rest/api/3/issue/${issueKey}/comment`, {
       body: {
-        body: {
-          type: "doc",
-          version: 1,
-          content: [{ type: "paragraph", content: [{ type: "text", text: String(text) }] }],
-        },
+        type: "doc",
+        version: 1,
+        content: [{ type: "paragraph", content: [{ type: "text", text: String(text) }] }],
       },
     });
   }
@@ -68,11 +67,9 @@ export class JiraClient {
 
     return this.request("POST", `/rest/api/3/issue/${issueKey}/comment`, {
       body: {
-        body: {
-          type: "doc",
-          version: 1,
-          content: docContent,
-        },
+        type: "doc",
+        version: 1,
+        content: docContent,
       },
     });
   }
