@@ -1,6 +1,9 @@
 import { refineStoryFromClaudeMd } from "../agents/architectRefineStory.js";
 import { jiraDescriptionPlain } from "../jira/jiraDescriptionPlain.js";
-import { extractAgentFolderRelPath } from "../services/agentFolderFromDescription.js";
+import {
+  extractAgentFolderRelPath,
+  stripAgentFolderLines,
+} from "../services/agentFolderFromDescription.js";
 import { loadClaudeMdFromRepoFolder } from "../services/claudeMdLoader.js";
 import { resolveTargetRepoPath } from "../services/repoPath.js";
 
@@ -26,14 +29,15 @@ export async function runArchitectRefineJob({
     folderRel: folder,
   });
 
+  const storyDescriptionPlain = stripAgentFolderLines(descPlain);
+
   const refined = await refineStoryFromClaudeMd({
     llm,
     issueSummary: issue.fields?.summary,
-    issueDescriptionPlain: descPlain,
+    issueDescriptionPlain: storyDescriptionPlain,
     claudeMdContent: content,
-    claudeRelativePath,
   });
 
-  const header = `Architect refined story (source: ${claudeRelativePath})\n\n`;
+  const header = `Refined story (claude.md: ${claudeRelativePath})\n\n`;
   await jira.addCommentParagraphs(issue.key, `${header}${refined}`);
 }

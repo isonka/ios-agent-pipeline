@@ -1,6 +1,6 @@
 const SYSTEM_PROMPT =
-  "You are a senior product architect for a software team. Write clear, actionable story text. " +
-  "Do not mention that you are an AI. Output markdown only (no JSON, no fenced code block wrapping the whole answer).";
+  "You refine Jira user stories. You only read two inputs: Story (from Jira) and Context (from claude.md). " +
+  "Output markdown only. Be direct and concise. Do not mention claude.md or Jira. No JSON.";
 
 export function shouldTriggerArchitectRefineFromComment(commentBody) {
   const text = String(commentBody || "").toLowerCase();
@@ -9,29 +9,33 @@ export function shouldTriggerArchitectRefineFromComment(commentBody) {
   return true;
 }
 
+/**
+ * @param {object} params
+ * @param {object} params.llm
+ * @param {string} [params.issueSummary] Jira summary
+ * @param {string} [params.issueDescriptionPlain] Jira description (Agent folder line already removed)
+ * @param {string} [params.claudeMdContent] Full claude.md text — sole engineering/product context
+ */
 export async function refineStoryFromClaudeMd({
   llm,
   issueSummary,
   issueDescriptionPlain,
   claudeMdContent,
-  claudeRelativePath,
 }) {
+  const summary = String(issueSummary || "").trim() || "(none)";
+  const storyBody = String(issueDescriptionPlain || "").trim() || "(none)";
+  const context = String(claudeMdContent || "").trim() || "(empty)";
+
   const userPrompt = [
-    "Refine the Jira story using the repository claude.md file as extra product/engineering context.",
+    "STORY",
+    summary,
     "",
-    "--- Jira summary ---",
-    String(issueSummary || "").trim() || "(none)",
+    storyBody,
     "",
-    "--- Jira description (plain text, includes Agent folder line) ---",
-    String(issueDescriptionPlain || "").trim() || "(empty)",
+    "CONTEXT",
+    context,
     "",
-    `--- File: ${claudeRelativePath} ---`,
-    String(claudeMdContent || "").trim() || "(empty)",
-    "",
-    "Output requirements:",
-    "- Markdown only.",
-    "- Use these sections in order: ## Refined summary, ## Goal, ## Scope, ## Acceptance criteria, ## Out of scope / assumptions, ## Risks or open questions.",
-    "- Ground statements in the Jira text and claude.md; do not invent product facts that are not supported by those sources.",
+    "Rewrite STORY into one refined user story (markdown). Use CONTEXT only where it clarifies scope, constraints, or terminology. Do not invent requirements beyond STORY and CONTEXT.",
   ].join("\n");
 
   const text = await llm.generateText({

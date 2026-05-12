@@ -1,6 +1,6 @@
+import { jiraDescriptionPlain } from "../jira/jiraDescriptionPlain.js";
+
 const ARCHITECT_SYSTEM_PROMPT = "You are an iOS Architect agent. Output only valid JSON.";
-const MEMORY_SCHEMA =
-  '{"projectOverview":"string","architecture":"string","iosConventions":["string"],"keyComponents":[{"name":"string","responsibility":"string"}],"deliveryGuidance":"string","knownRisks":["string"]}';
 const SUBTASK_SCHEMA =
   '{"summary":"string","subtasks":[{"title":"string","body":"string with acceptance criteria","storyPoints":1,"changedFiles":["path/from/evidence"],"suggestedSkill":"path/to/SKILL.md or null"}]}';
 
@@ -8,23 +8,14 @@ function j(value) {
   return JSON.stringify(value);
 }
 
-function buildArchitectMemoryPrompt(context) {
-  return [
-    "Make project memory.",
-    "Use docs.",
-    "JSON only.",
-    "DOCS",
-    ...context.docs.map((doc) => `--- ${doc.path}\n${doc.content}`),
-    `SCHEMA ${MEMORY_SCHEMA}`,
-  ].join("\n");
-}
-
-function buildArchitectPrompt(issue, architectMemory, implementationContext) {
+function buildArchitectPrompt(issue, implementationContext) {
   const evidencePaths = (implementationContext?.matches || []).map((match) => match.path);
   const skillDocs = implementationContext?.skillDocs || [];
-  return [
+  const descPlain = jiraDescriptionPlain(issue.fields?.description).slice(0, 6000);
+
+  const parts = [
     `ISSUE ${issue.key}: ${issue.fields?.summary || ""}`,
-    `MEM ${j(architectMemory)}`,
+    descPlain ? `DESCRIPTION\n${descPlain}` : "",
     `EVIDENCE ${j(evidencePaths)}`,
     `SKILLS ${j(skillDocs)}`,
     "RULES",
@@ -35,7 +26,8 @@ function buildArchitectPrompt(issue, architectMemory, implementationContext) {
     "- suggestedSkill must be null or from SKILLS",
     "- 3 to 6 subtasks",
     `SCHEMA ${SUBTASK_SCHEMA}`,
-  ].join("\n");
+  ];
+  return parts.filter(Boolean).join("\n");
 }
 
 function extractJsonCandidate(text) {
@@ -96,28 +88,14 @@ async function generateJsonWithRepair({
   }
 }
 
-export async function generateArchitectMemory({ llm, context }) {
-  const parsed = await generateJsonWithRepair({
-    llm,
-    userPrompt: buildArchitectMemoryPrompt(context),
-    failurePrefix: "Architect memory generation returned non-JSON content",
-    repairSchemaDescription: MEMORY_SCHEMA,
-  });
-
-  if (!parsed?.projectOverview || !Array.isArray(parsed?.keyComponents)) {
-    throw new Error("Architect memory missing required projectOverview/keyComponents.");
-  }
-  return parsed;
-}
-
-export async function runArchitect({ llm, issue, architectMemory, implementationContext }) {
+export async function runArchitect({ llm, issue, implementationContext }) {
   const evidencePaths = new Set(
     (implementationContext?.matches || []).map((item) => String(item.path || "").trim()).filter(Boolean)
   );
   const skillDocs = new Set((implementationContext?.skillDocs || []).map((item) => String(item || "").trim()));
   const parsed = await generateJsonWithRepair({
     llm,
-    userPrompt: buildArchitectPrompt(issue, architectMemory, implementationContext),
+    userPrompt: buildArchitectPrompt(issue, implementationContext),
     failurePrefix: "Architect returned non-JSON content",
     repairSchemaDescription: SUBTASK_SCHEMA,
   });

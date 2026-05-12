@@ -6,7 +6,6 @@ import { buildProjectContext } from "./services/projectContext.js";
 import { loadRunState, saveRunState } from "./services/runStore.js";
 import {
   createArchitectSubtasks,
-  ensureArchitectMemory,
 } from "./services/pipeline/architectFlow.js";
 import { BedrockClaudeClient } from "./llm/bedrockClaude.js";
 import { JiraClient } from "./integrations/jiraClient.js";
@@ -66,32 +65,6 @@ async function loadIssueAndContext({ jira, issueKey, targetRepoPath, targetFallb
   return { issue, context, resolvedRepoPath };
 }
 
-app.post("/pipeline/learn-architect-context", async (req, res) => {
-  try {
-    const { targetRepoPath, forceRegenerate = false } = req.body || {};
-    const config = envConfig();
-    const deps = createDependencies(config);
-    const resolvedRepoPath = await resolveRepoPath({
-      targetRepoPath,
-      targetFallback: config.targetProjectPathFallback,
-    });
-
-    const memoryResult = await ensureArchitectMemory({
-      llm: deps.llm,
-      targetRepoPath: resolvedRepoPath,
-      forceRegenerate: Boolean(forceRegenerate),
-    });
-
-    res.status(200).json({
-      targetRepoPath: resolvedRepoPath,
-      architectMemoryPath: memoryResult.architectMemoryPath,
-      architectMemoryGenerated: memoryResult.architectMemoryGenerated,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.post("/pipeline/create-subtasks", async (req, res) => {
   try {
     const { issueKey, targetRepoPath } = req.body || {};
@@ -106,18 +79,11 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       targetFallback: config.targetProjectPathFallback,
     });
 
-    const memoryResult = await ensureArchitectMemory({
-      llm: deps.llm,
-      targetRepoPath: resolvedRepoPath,
-    });
-
     const architectResult = await createArchitectSubtasks({
       llm: deps.llm,
       jira: deps.jira,
       issue,
       targetRepoPath: resolvedRepoPath,
-      architectMemory: memoryResult.architectMemory,
-      architectMemoryPath: memoryResult.architectMemoryPath,
       jiraSubtaskTargetStatus: config.jiraSubtaskTargetStatus,
     });
 
@@ -125,12 +91,6 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       issueKey: issue.key,
       targetRepoPath: resolvedRepoPath,
       architect: architectResult,
-      architectMemory: {
-        path: memoryResult.architectMemoryPath,
-        generated: memoryResult.architectMemoryGenerated,
-        updated: architectResult.architectMemoryUpdated,
-        addedSignals: architectResult.architectMemoryAddedSignals,
-      },
       implementationContext: architectResult.implementationContext,
       subtasks: architectResult.createdSubtasks,
       updatedAt: new Date().toISOString(),
@@ -141,10 +101,6 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
       [
         `Architect created ${architectResult.createdSubtasks.length} subtasks for ${issue.key}.`,
         `Target repo: ${resolvedRepoPath}`,
-        `Architect memory: ${memoryResult.architectMemoryPath} (${memoryResult.architectMemoryGenerated ? "created" : "reused"})`,
-        architectResult.architectMemoryUpdated
-          ? `Architect memory updated with ${architectResult.architectMemoryAddedSignals} new implementation signals.`
-          : "Architect memory had no new implementation signals.",
         config.jiraSubtaskTargetStatus
           ? `Subtasks moved to status: ${config.jiraSubtaskTargetStatus}`
           : "Subtasks left in Jira default status.",
@@ -154,10 +110,6 @@ app.post("/pipeline/create-subtasks", async (req, res) => {
     res.status(200).json({
       issueKey: issue.key,
       targetRepoPath: resolvedRepoPath,
-      architectMemoryPath: memoryResult.architectMemoryPath,
-      architectMemoryGenerated: memoryResult.architectMemoryGenerated,
-      architectMemoryUpdated: architectResult.architectMemoryUpdated,
-      architectMemoryAddedSignals: architectResult.architectMemoryAddedSignals,
       summary: architectResult.summary,
       moduleResolution: architectResult.moduleResolution,
       implementationContext: architectResult.implementationContext,

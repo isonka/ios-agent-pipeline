@@ -4,11 +4,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 
-import { loadArchitectMemory, saveArchitectMemory } from "../src/services/architectMemory.js";
-import {
-  createArchitectSubtasks,
-  ensureArchitectMemory,
-} from "../src/services/pipeline/architectFlow.js";
+import { createArchitectSubtasks } from "../src/services/pipeline/architectFlow.js";
 
 async function makeTempRepo() {
   const repoPath = await fs.mkdtemp(path.join(os.tmpdir(), "ios-agent-pipeline-"));
@@ -16,48 +12,7 @@ async function makeTempRepo() {
   return repoPath;
 }
 
-test("ensureArchitectMemory generates once and then reuses saved memory", async () => {
-  const repoPath = await makeTempRepo();
-  await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
-
-  const llm = {
-    calls: 0,
-    async generateText() {
-      this.calls += 1;
-      return JSON.stringify({
-        projectOverview: "Overview",
-        architecture: "Architecture",
-        iosConventions: ["Swift"],
-        keyComponents: [{ name: "Discover", responsibility: "Offers" }],
-        deliveryGuidance: "Guidance",
-        knownRisks: ["Risk"],
-      });
-    },
-  };
-
-  const first = await ensureArchitectMemory({
-    llm,
-    targetRepoPath: repoPath,
-  });
-
-  assert.equal(first.architectMemoryGenerated, true);
-  assert.equal(llm.calls, 1);
-  assert.equal(first.architectMemoryPath, ".ios-agent/architect-context.json");
-
-  const second = await ensureArchitectMemory({
-    llm: {
-      async generateText() {
-        throw new Error("LLM should not be called when memory exists");
-      },
-    },
-    targetRepoPath: repoPath,
-  });
-
-  assert.equal(second.architectMemoryGenerated, false);
-  assert.equal(second.architectMemory.projectOverview, "Overview");
-});
-
-test("createArchitectSubtasks updates memory with new implementation signals", async () => {
+test("createArchitectSubtasks creates subtasks from LLM using issue and evidence only", async () => {
   const repoPath = await makeTempRepo();
   await fs.writeFile(path.join(repoPath, "README.md"), "# App\n", "utf8");
   await fs.writeFile(
@@ -71,19 +26,6 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
     "# SwiftUI migration skill\n",
     "utf8"
   );
-
-  await saveArchitectMemory(repoPath, {
-    generatedAt: new Date().toISOString(),
-    sourceDocuments: ["README.md"],
-    content: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "Discover", responsibility: "Offers" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-  });
 
   let llmCalls = 0;
   const llm = {
@@ -158,15 +100,6 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
     jira,
     issue,
     targetRepoPath: repoPath,
-    architectMemory: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "Discover", responsibility: "Offers" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-    architectMemoryPath: ".ios-agent/architect-context.json",
     jiraSubtaskTargetStatus: "In Progress",
   });
 
@@ -175,14 +108,9 @@ test("createArchitectSubtasks updates memory with new implementation signals", a
   assert.equal(jira.transitioned.length, 2);
   assert.equal(result.createdSubtasks[0].storyPoints, 1);
   assert.deepEqual(result.createdSubtasks[0].changedFiles, ["DiscoverPackagesView.swift"]);
-  assert.equal(result.architectMemoryUpdated, true);
-  assert.ok(result.architectMemoryAddedSignals > 0);
   assert.ok(result.implementationContext.matches.length > 0);
   assert.ok(result.implementationContext.skillDocs.includes("skills/swiftui-migration/SKILL.md"));
 
-  const updatedMemory = await loadArchitectMemory(repoPath);
-  assert.ok(Array.isArray(updatedMemory.content.implementationSignals));
-  assert.ok(updatedMemory.content.implementationSignals.length > 0);
   assert.match(jira.created[0].body, /Story points: 1/);
   assert.match(jira.created[0].body, /Changed files:/);
 });
@@ -232,19 +160,6 @@ test("createArchitectSubtasks uses deterministic planning for UIKit to SwiftUI s
     "utf8"
   );
 
-  await saveArchitectMemory(repoPath, {
-    generatedAt: new Date().toISOString(),
-    sourceDocuments: ["README.md"],
-    content: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "Discover", responsibility: "Offers" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-  });
-
   const llm = {
     async generateText() {
       throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
@@ -271,15 +186,6 @@ test("createArchitectSubtasks uses deterministic planning for UIKit to SwiftUI s
     jira,
     issue,
     targetRepoPath: repoPath,
-    architectMemory: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "Discover", responsibility: "Offers" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-    architectMemoryPath: ".ios-agent/architect-context.json",
     jiraSubtaskTargetStatus: "",
   });
 
@@ -344,19 +250,6 @@ test("deterministic planner respects TargetShared module hint from Jira descript
     "utf8"
   );
 
-  await saveArchitectMemory(repoPath, {
-    generatedAt: new Date().toISOString(),
-    sourceDocuments: ["README.md"],
-    content: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-  });
-
   const llm = {
     async generateText() {
       throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
@@ -386,15 +279,6 @@ test("deterministic planner respects TargetShared module hint from Jira descript
     jira,
     issue,
     targetRepoPath: repoPath,
-    architectMemory: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-    architectMemoryPath: ".ios-agent/architect-context.json",
     jiraSubtaskTargetStatus: "",
   });
 
@@ -427,19 +311,6 @@ test("deterministic planner fails when hinted module has no evidence", async () 
     "utf8"
   );
 
-  await saveArchitectMemory(repoPath, {
-    generatedAt: new Date().toISOString(),
-    sourceDocuments: ["README.md"],
-    content: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "Core", responsibility: "Common platform code" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-  });
-
   const llm = {
     async generateText() {
       throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
@@ -468,15 +339,6 @@ test("deterministic planner fails when hinted module has no evidence", async () 
         jira,
         issue,
         targetRepoPath: repoPath,
-        architectMemory: {
-          projectOverview: "Overview",
-          architecture: "Architecture",
-          iosConventions: ["Swift"],
-          keyComponents: [{ name: "Core", responsibility: "Common platform code" }],
-          deliveryGuidance: "Guidance",
-          knownRisks: [],
-        },
-        architectMemoryPath: ".ios-agent/architect-context.json",
         jiraSubtaskTargetStatus: "",
       }),
     /Low confidence module resolution/
@@ -518,19 +380,6 @@ test("deterministic planner seeds evidence from hinted root path", async () => {
     "utf8"
   );
 
-  await saveArchitectMemory(repoPath, {
-    generatedAt: new Date().toISOString(),
-    sourceDocuments: ["README.md"],
-    content: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-  });
-
   const llm = {
     async generateText() {
       throw new Error("LLM should not be called for deterministic UIKit->SwiftUI planning");
@@ -561,15 +410,6 @@ test("deterministic planner seeds evidence from hinted root path", async () => {
     jira,
     issue,
     targetRepoPath: repoPath,
-    architectMemory: {
-      projectOverview: "Overview",
-      architecture: "Architecture",
-      iosConventions: ["Swift"],
-      keyComponents: [{ name: "SMB", responsibility: "Bundles" }],
-      deliveryGuidance: "Guidance",
-      knownRisks: [],
-    },
-    architectMemoryPath: ".ios-agent/architect-context.json",
     jiraSubtaskTargetStatus: "",
   });
 

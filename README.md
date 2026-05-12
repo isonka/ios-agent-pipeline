@@ -14,10 +14,8 @@ Server entrypoint: `src/server.js`
 Given a Jira issue, the pipeline coordinates role-based handoff:
 
 1. **Architect**
-   - learns project context from repository docs
-   - stores reusable memory in `/.ios-agent/architect-context.json`
-   - inspects live implementation evidence from source files for each story
-   - creates actionable Jira subtasks
+   - reads the Jira issue (summary + description) and scans the repo for implementation evidence
+   - creates actionable Jira subtasks grounded in matched files (no persisted project memory)
 2. **Developer**
    - produces implementation plan + patch proposal for one selected subtask
 3. **Tester**
@@ -71,24 +69,6 @@ All endpoints are JSON over HTTP.
 
 Returns basic server status.
 
-### `POST /pipeline/learn-architect-context`
-
-Builds or refreshes architect memory for a target repo.
-
-Request body:
-
-```json
-{
-  "targetRepoPath": "/absolute/path/to/target/repo",
-  "forceRegenerate": false
-}
-```
-
-Notes:
-- `targetRepoPath` is optional.
-- When omitted, `TARGET_PROJECT_PATH` is used.
-- `forceRegenerate=true` rebuilds memory even if it already exists.
-
 ### `POST /pipeline/create-subtasks`
 
 Creates architect subtasks for a Jira issue.
@@ -104,9 +84,7 @@ Request body:
 
 Behavior:
 - loads Jira issue
-- ensures architect memory exists
 - gathers story-specific implementation evidence from the codebase
-- updates memory when new implementation signals are discovered
 - generates 3-6 implementation-ready subtasks linked to real code files
 - enforces `storyPoints` between 1 and 3 per subtask
 - includes related repo skill guidance (`SKILL.md`) when relevant
@@ -166,6 +144,4 @@ npm test
 The suite includes architect-focused tests for:
 
 - JSON parsing and repair behavior
-- memory generation/reuse
-- subtask flow behavior
-- memory signal updates based on implementation evidence
+- subtask flow behavior (LLM and deterministic UIKit→SwiftUI paths)

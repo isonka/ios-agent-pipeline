@@ -22,3 +22,13 @@ function normalizeRelPath(raw) {
     .replace(/\\/g, "/")
     .replace(/^\/+/, "");
 }
+
+/** Remove `Agent folder: ...` lines so routing metadata is not sent to the LLM as story text. */
+export function stripAgentFolderLines(descriptionPlain) {
+  return String(descriptionPlain || "")
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*Agent\s+folder\s*:\s*.+$/i.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}

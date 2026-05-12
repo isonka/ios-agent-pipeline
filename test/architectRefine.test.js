@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 
 import { jiraDescriptionPlain } from "../src/jira/jiraDescriptionPlain.js";
-import { extractAgentFolderRelPath } from "../src/services/agentFolderFromDescription.js";
+import { extractAgentFolderRelPath, stripAgentFolderLines } from "../src/services/agentFolderFromDescription.js";
 import { loadClaudeMdFromRepoFolder } from "../src/services/claudeMdLoader.js";
 import {
   shouldTriggerArchitectRefineFromComment,
@@ -74,18 +74,28 @@ test("loadClaudeMdFromRepoFolder rejects traversal", async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
+test("stripAgentFolderLines removes routing line", () => {
+  const plain = "Goal text\nAgent folder: Mod/Foo\nMore body";
+  assert.equal(stripAgentFolderLines(plain), "Goal text\nMore body");
+});
+
 test("refineStoryFromClaudeMd calls llm", async () => {
+  let receivedUser = "";
   const llm = {
-    async generateText() {
-      return "## Refined summary\nx\n\n## Goal\ny";
+    async generateText({ userPrompt }) {
+      receivedUser = userPrompt;
+      return "Refined output";
     },
   };
   const text = await refineStoryFromClaudeMd({
     llm,
     issueSummary: "S",
-    issueDescriptionPlain: "Agent folder: A/B",
+    issueDescriptionPlain: "Do the thing",
     claudeMdContent: "rules",
-    claudeRelativePath: "A/B/claude.md",
   });
-  assert.match(text, /Refined summary/);
+  assert.equal(text, "Refined output");
+  assert.match(receivedUser, /STORY/);
+  assert.match(receivedUser, /CONTEXT/);
+  assert.match(receivedUser, /Do the thing/);
+  assert.match(receivedUser, /rules/);
 });

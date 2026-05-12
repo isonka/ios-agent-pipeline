@@ -1,34 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { generateArchitectMemory, runArchitect } from "../src/agents/architect.js";
-
-test("generateArchitectMemory parses fenced JSON response", async () => {
-  const llm = {
-    async generateText() {
-      return [
-        "```json",
-        "{",
-        '  "projectOverview": "iOS commerce app",',
-        '  "architecture": "MVVM + coordinators",',
-        '  "iosConventions": ["SwiftLint"],',
-        '  "keyComponents": [{ "name": "Discover", "responsibility": "surfacing offers" }],',
-        '  "deliveryGuidance": "split by feature boundaries",',
-        '  "knownRisks": ["legacy flows"]',
-        "}",
-        "```",
-      ].join("\n");
-    },
-  };
-
-  const result = await generateArchitectMemory({
-    llm,
-    context: { docs: [{ path: "README.md", content: "sample" }] },
-  });
-
-  assert.equal(result.projectOverview, "iOS commerce app");
-  assert.equal(result.keyComponents[0].name, "Discover");
-});
+import { runArchitect } from "../src/agents/architect.js";
 
 test("runArchitect repairs non-JSON first response", async () => {
   let calls = 0;
@@ -63,7 +36,6 @@ test("runArchitect repairs non-JSON first response", async () => {
   const result = await runArchitect({
     llm,
     issue: { key: "IOS-1", fields: { summary: "Migrate Discover Packages" } },
-    architectMemory: { projectOverview: "sample" },
     implementationContext: {
       keywords: ["Discover Packages"],
       filesScanned: 1,
@@ -88,7 +60,6 @@ test("runArchitect throws when subtasks are missing", async () => {
       runArchitect({
         llm,
         issue: { key: "IOS-2", fields: { summary: "Anything" } },
-        architectMemory: { projectOverview: "sample" },
         implementationContext: { keywords: [], filesScanned: 0, matches: [], skillDocs: [] },
       }),
     /subtasks/
