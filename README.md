@@ -7,9 +7,12 @@ Server entrypoint: `src/server.js`
 ## What It Does
 
 1. **Architect (refine)** — `POST /hooks/jira/comment` with `@architect refine` (or equivalent) reads `claude.md` from the path in the issue description (`Agent folder: …`) and posts a **refined story** as a Jira comment.
-2. **Architect (approved)** — When the story is good, `@architect approved` (or `POST /pipeline/architect-approved`) copies the **latest** refined-story comment into the **issue description** (keeps an existing `Agent folder: …` line at the top when it is already in the description). Developer always reads **summary + description** (Agent folder line stripped for the LLM), not comments.
-3. **Developer** — **Plan path:** `POST /pipeline/developer-plan` (or `@developer plan`) posts the plan, runs **architect review** of that plan, and on **approve** runs **implementation** automatically unless disabled in the request body. **One-shot:** `POST /pipeline/run-developer`. **Manual execute:** `POST /pipeline/developer-execute` if you skipped review or turned off auto-execute.
-4. **Tester** / **Reviewer** — evaluate a supplied diff.
+2. **Architect (approved)** — `@architect approved` (or `POST /pipeline/architect-approved`) copies the **latest** refined-story comment into the **issue description** (keeps an existing `Agent folder: …` line when present). Developer reads **summary + description** for coding context (not other comments for scope).
+3. **Developer (plan)** — `POST /pipeline/developer-plan` or `@developer plan` posts **one** Jira comment: human plan + hidden JSON draft marker. **Stops there** (next turn is architect).
+4. **Architect (check plan)** — `@architect check plan` or `POST /pipeline/architect-check-plan`: reads the latest developer plan from Jira comments, runs architect LLM review, posts **APPROVE** or **REJECT** + reason only (no implementation, no description sync).
+5. **Developer (execute)** — After you accept the plan in process, `POST /pipeline/developer-execute` or `@developer` + plan approved + `start implementation` generates the patch from the latest plan comment.
+6. **One-shot** — `POST /pipeline/run-developer` (single LLM, plan + patch).
+7. **Tester** / **Reviewer** — evaluate a supplied diff.
 
 Run artifacts: **tester** / **reviewer** may still persist under `.data/pipeline-runs/<ISSUE_KEY>.json`. **Developer** plan/execute state lives only in **Jira comments** (see developer-plan comment body).
 
@@ -75,30 +78,19 @@ Request body:
 }
 ```
 
+### `POST /pipeline/architect-check-plan`
+
+**Architect turn:** reads the latest **developer plan** Jira comment (JSON marker), runs the architect review LLM, posts **APPROVE** or **REJECT** + short guidance. Does **not** run `developer-execute` or `architect-approved`.
+
+Same as a comment containing **`@architect check plan`** (no `refine` in that comment).
+
+Request body: `issueKey`, optional `targetRepoPath`.
+
 ### `POST /pipeline/developer-plan`
 
-Developer **step 1**: posts the plan Jira comment (human text + JSON trailer). Then an **architect LLM** reviews that plan against the story (`runArchitectReviewDeveloperPlan`). A second Jira comment records **APPROVE** or **REJECT** plus a short reason.
+Developer **plan** turn: one LLM call, then **one** Jira comment (human plan + hidden JSON trailer). **No** architect review and **no** implementation in this step.
 
-- If the architect **approves**, the server **automatically runs** the same work as `POST /pipeline/developer-execute` (patch + implementation comment), unless you opt out (see below).
-- If the architect **rejects**, no implementation run; fix the story/plan and call developer-plan again.
-
-Request body:
-
-```json
-{
-  "issueKey": "IOS-123",
-  "targetRepoPath": "/optional/repo",
-  "skipArchitectReview": false,
-  "autoExecuteOnArchitectApprove": true,
-  "autoArchitectApprovedOnPlanReview": true
-}
-```
-
-- **`skipArchitectReview`**: if `true`, only the developer plan comment is posted (legacy manual flow: you review in Jira yourself, then call `developer-execute` or the hook).
-- **`autoExecuteOnArchitectApprove`**: if `false` and the architect still approves, you get the approve comment but **no** automatic patch; call `developer-execute` yourself. Defaults to **true** when omitted.
-- **`autoArchitectApprovedOnPlanReview`**: if `true` (default), after an **approve** the server also runs the same logic as **`POST /pipeline/architect-approved`** (latest refine comment → issue description) before generating the patch; if that step fails (e.g. no refine comment yet), a short Jira note is posted and **implementation still runs**.
-
-The same options are accepted on **`POST /hooks/jira/comment`** when the comment triggers developer plan (pass them in the JSON body next to `commentBody`).
+Request body: `issueKey`, optional `targetRepoPath`.
 
 ### `POST /pipeline/developer-execute`
 
@@ -125,11 +117,12 @@ Comment-shaped triggers; returns **202** and runs work asynchronously.
 | Intent | Rule (case-insensitive) |
 |--------|-------------------------|
 | Architect refine | `@architect` and word `refine` |
+| Architect check plan | `@architect` and phrase `check plan`, and **not** word `refine` |
 | Architect approved | `@architect` and word `approved`, and **not** word `refine` |
 | Developer execute | `@developer`, `plan is approved` or `plan was approved`, and `start implementation` |
 | Developer plan | `@developer` and `plan`, and not the execute rule above |
 
-Refine is checked before approved. Comments that contain both `refine` and `approved` match **refine**.
+Refine is checked first, then **check plan**, then approved, then developer rules.
 
 ### `POST /pipeline/run-tester`
 

@@ -16,6 +16,7 @@ import { runReviewer } from "./agents/reviewer.js";
 import { resolveJiraCommentHook } from "./agents/jiraCommentHooks.js";
 import { runArchitectRefineJob } from "./hooks/runArchitectRefineJob.js";
 import { runArchitectApprovedJob } from "./hooks/runArchitectApprovedJob.js";
+import { runArchitectCheckPlanJob } from "./hooks/runArchitectCheckPlanJob.js";
 
 const app = express();
 app.use(express.json());
@@ -103,14 +104,31 @@ app.post("/pipeline/developer-plan", async (req, res) => {
       issueKey,
       targetRepoPath,
       targetFallback: config.targetProjectPathFallback,
-      options: {
-        skipArchitectReview: Boolean(req.body?.skipArchitectReview),
-        autoExecuteOnArchitectApprove: req.body?.autoExecuteOnArchitectApprove !== false,
-        autoArchitectApprovedOnPlanReview: req.body?.autoArchitectApprovedOnPlanReview !== false,
-      },
     });
 
     res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/** Architect reviews latest developer plan comment (@architect check plan). */
+app.post("/pipeline/architect-check-plan", async (req, res) => {
+  try {
+    const { issueKey, targetRepoPath } = req.body || {};
+    if (!issueKey) return jsonError(res, 400, "issueKey is required");
+
+    const config = envConfig();
+    const deps = createDependencies(config);
+    const review = await runArchitectCheckPlanJob({
+      jira: deps.jira,
+      llm: deps.llm,
+      issueKey,
+      targetRepoPath,
+      targetFallback: config.targetProjectPathFallback,
+    });
+
+    res.status(200).json({ issueKey, ...review });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -264,12 +282,11 @@ app.post("/hooks/jira/comment", (req, res) => {
     return res.status(200).json({
       status: "ignored",
       reason:
-        "No matching command. Expected @architect refine, @architect approved, @developer plan, or @developer plan is approved + start implementation.",
+        "No matching command. Expected @architect refine, @architect check plan, @architect approved, @developer plan, or @developer plan is approved + start implementation.",
     });
   }
 
   const targetRepoPath = req.body?.targetRepoPath || "";
-  const hookBody = req.body || {};
 
   res.status(202).json({ status: "accepted", issueKey, hook });
 
@@ -281,6 +298,14 @@ app.post("/hooks/jira/comment", (req, res) => {
       console.log(`${logPrefix} start`);
       if (hook === "architect_refine") {
         await runArchitectRefineJob({
+          jira: deps.jira,
+          llm: deps.llm,
+          issueKey,
+          targetRepoPath,
+          targetFallback: cfg.targetProjectPathFallback,
+        });
+      } else if (hook === "architect_check_plan") {
+        await runArchitectCheckPlanJob({
           jira: deps.jira,
           llm: deps.llm,
           issueKey,
@@ -301,11 +326,6 @@ app.post("/hooks/jira/comment", (req, res) => {
           issueKey,
           targetRepoPath,
           targetFallback: cfg.targetProjectPathFallback,
-          options: {
-            skipArchitectReview: Boolean(hookBody.skipArchitectReview),
-            autoExecuteOnArchitectApprove: hookBody.autoExecuteOnArchitectApprove !== false,
-            autoArchitectApprovedOnPlanReview: hookBody.autoArchitectApprovedOnPlanReview !== false,
-          },
         });
       } else if (hook === "developer_execute") {
         await runDeveloperExecutePipeline({
@@ -334,7 +354,7 @@ async function start() {
     console.log(`LLM provider: bedrock`);
     console.log(`Bedrock model: ${config.bedrockModelId}`);
     console.log(
-      "Jira comment hook (manual curl ok): POST /hooks/jira/comment — @architect refine | @architect approved | @developer plan | @developer plan is approved start implementation"
+      "Jira comment hook: POST /hooks/jira/comment — @architect refine | @architect check plan | @architect approved | @developer plan | @developer plan is approved start implementation"
     );
   });
 }

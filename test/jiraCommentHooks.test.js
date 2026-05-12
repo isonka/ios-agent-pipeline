@@ -8,6 +8,15 @@ test("resolveJiraCommentHook architect refine", () => {
   assert.equal(resolveJiraCommentHook("Please @architect refine"), "architect_refine");
 });
 
+test("resolveJiraCommentHook architect check plan", () => {
+  assert.equal(resolveJiraCommentHook("@architect check plan"), "architect_check_plan");
+  assert.equal(resolveJiraCommentHook("Please @architect check plan thanks"), "architect_check_plan");
+});
+
+test("resolveJiraCommentHook check plan not matched when refine present", () => {
+  assert.equal(resolveJiraCommentHook("@architect refine and check plan later"), "architect_refine");
+});
+
 test("resolveJiraCommentHook developer plan", () => {
   assert.equal(resolveJiraCommentHook("@developer plan story"), "developer_plan");
   assert.equal(resolveJiraCommentHook("@developer plan the work"), "developer_plan");
