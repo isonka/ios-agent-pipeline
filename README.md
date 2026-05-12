@@ -94,13 +94,20 @@ Request body: `issueKey`, optional `targetRepoPath`.
 
 ### `POST /pipeline/developer-execute`
 
-Developer **step 2**: reads the **latest** developer plan comment (same marker + JSON), runs patch LLM, posts the implementation comment. **No run-state draft file.**
+Reads the latest developer plan from Jira comments, runs the patch LLM, then **`git apply`** in the **target repo**. On success it creates a **local** branch and **one commit** (same skip flags as below). Jira comment includes apply status, branch name, short commit hash, and the diff (truncated). Requires `git` on the server `PATH`, and the target repo should have `user.name` / `user.email` configured for commits.
+
+Branch name convention: **`feat/{userSlug}/{ISSUEKEY}-{summary-slug}`** (example: `feat/okarsli/MP-17833-add-login-flow`). **`userSlug`** comes from, in order: env **`DEVELOPER_BRANCH_USER_SLUG`**, else Jira assignee **email local-part**, else slugified **displayName**, else `developer`.
+
+- **`DEVELOPER_SKIP_GIT_APPLY=true`** — skip `git apply` (diff-only / dry behavior).
+- **`DEVELOPER_SKIP_GIT_COMMIT=true`** — apply patch but do **not** create branch or commit (useful for local inspection before committing).
 
 Request body: `issueKey`, optional `targetRepoPath`.
 
+Response may include **`developerBranch`** and **`developerCommitSha`** when commit succeeds.
+
 ### `POST /pipeline/run-developer`
 
-One LLM call: full developer JSON (plan + patch + notes). Jira comment + HTTP response only; **no** developer entry in run-state JSON.
+One LLM call (plan + patch). Applies the patch with **`git apply`** when `patchProposal` is non-empty, then creates the **`feat/...`** branch and commit (same env vars as developer-execute).
 
 ### `POST /hooks/jira/comment`
 

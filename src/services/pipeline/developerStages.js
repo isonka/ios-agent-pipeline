@@ -7,6 +7,8 @@ import {
   serializeDeveloperPlanComment,
   fetchLatestDeveloperDraftFromComments,
 } from "../developerDraftFromComments.js";
+import { applyUnifiedDiffToRepo } from "../applyUnifiedDiffToRepo.js";
+import { checkoutNewBranchAndCommitAppliedPatch } from "../developerGitBranchCommit.js";
 
 /**
  * Planning text for developer LLM: **Jira description only** (summary + description with Agent folder line stripped).
@@ -95,22 +97,73 @@ export async function runDeveloperExecutePipeline({
     patchProposal: executeResult.patchProposal,
   };
 
-  await jira.addCommentParagraphs(
-    issueKey,
-    [
-      `Developer **implementation** for ${issueKey}`,
-      "",
-      mergedDeveloper.implementationPlan || "",
-      "",
-      mergedDeveloper.patchProposal
-        ? "```diff\n" + String(mergedDeveloper.patchProposal).slice(0, 12000) + "\n```"
-        : "(no patchProposal)",
-    ].join("\n")
+  let applyStatus = "";
+  let developerBranch = "";
+  let developerCommitSha = "";
+  const patchText = mergedDeveloper.patchProposal ? String(mergedDeveloper.patchProposal) : "";
+  if (patchText.trim() && process.env.DEVELOPER_SKIP_GIT_APPLY !== "true") {
+    try {
+      applyUnifiedDiffToRepo(resolvedRepoPath, patchText);
+    } catch (applyErr) {
+      await jira.addCommentParagraphs(
+        issueKey,
+        [
+          `Developer **implementation** (${issueKey}) — apply failed`,
+          "",
+          `Patch **not applied** (git apply failed): ${applyErr.message}`,
+          "",
+          patchText ? "```diff\n" + patchText.slice(0, 12000) + "\n```" : "(no patch text)",
+        ].join("\n")
+      );
+      throw applyErr;
+    }
+    applyStatus = `Patch **applied** in \`${resolvedRepoPath}\`.`;
+    if (process.env.DEVELOPER_SKIP_GIT_COMMIT !== "true") {
+      try {
+        const gitMeta = checkoutNewBranchAndCommitAppliedPatch(resolvedRepoPath, {
+          issueKey,
+          summary: issue.fields?.summary || "",
+          assignee: issue.fields?.assignee || null,
+          patchText,
+        });
+        developerBranch = gitMeta.branch;
+        developerCommitSha = gitMeta.commitSha;
+        applyStatus += ` Created branch \`${developerBranch}\`, commit \`${developerCommitSha.slice(0, 12)}\`.`;
+      } catch (commitErr) {
+        await jira.addCommentParagraphs(
+          issueKey,
+          [
+            `Developer **implementation** (${issueKey}) — git branch/commit failed after apply`,
+            "",
+            commitErr.message,
+            "",
+            "Patch may still be present as local changes on the current branch; inspect the repo.",
+          ].join("\n")
+        );
+        throw commitErr;
+      }
+    } else {
+      applyStatus += " Branch/commit skipped (`DEVELOPER_SKIP_GIT_COMMIT=true`).";
+    }
+  } else if (patchText.trim()) {
+    applyStatus = "Patch not applied (`DEVELOPER_SKIP_GIT_APPLY=true`).";
+  }
+
+  const successParts = [`Developer **implementation** for ${issueKey}`];
+  if (applyStatus) successParts.push(applyStatus);
+  successParts.push(mergedDeveloper.implementationPlan || "");
+  successParts.push(
+    mergedDeveloper.patchProposal
+      ? "```diff\n" + String(mergedDeveloper.patchProposal).slice(0, 12000) + "\n```"
+      : "(no patchProposal)"
   );
+  await jira.addCommentParagraphs(issueKey, successParts.join("\n\n"));
 
   return {
     issueKey,
     targetRepoPath: resolvedRepoPath,
+    developerBranch: developerBranch || undefined,
+    developerCommitSha: developerCommitSha || undefined,
     ...mergedDeveloper,
   };
 }
@@ -137,14 +190,56 @@ export async function runDeveloperFullPipeline({
     context,
   });
 
+  const patchText = developerResult.patchProposal ? String(developerResult.patchProposal) : "";
+  let applyStatus = "";
+  let developerBranch = "";
+  let developerCommitSha = "";
+  if (patchText.trim() && process.env.DEVELOPER_SKIP_GIT_APPLY !== "true") {
+    try {
+      applyUnifiedDiffToRepo(resolvedRepoPath, patchText);
+    } catch (applyErr) {
+      await jira.addComment(
+        issueKey,
+        `Developer output for ${issueKey} — git apply failed: ${applyErr.message}\n\n${developerResult.implementationPlan || ""}`
+      );
+      throw applyErr;
+    }
+    applyStatus = `\n\nPatch applied: ${resolvedRepoPath}`;
+    if (process.env.DEVELOPER_SKIP_GIT_COMMIT !== "true") {
+      try {
+        const gitMeta = checkoutNewBranchAndCommitAppliedPatch(resolvedRepoPath, {
+          issueKey,
+          summary: issue.fields?.summary || "",
+          assignee: issue.fields?.assignee || null,
+          patchText,
+        });
+        developerBranch = gitMeta.branch;
+        developerCommitSha = gitMeta.commitSha;
+        applyStatus += `\nBranch \`${developerBranch}\`, commit \`${developerCommitSha.slice(0, 12)}\`.`;
+      } catch (commitErr) {
+        await jira.addComment(
+          issueKey,
+          `Developer output for ${issueKey} — git branch/commit failed after apply: ${commitErr.message}\n\n${developerResult.implementationPlan || ""}`
+        );
+        throw commitErr;
+      }
+    } else {
+      applyStatus += "\nBranch/commit skipped (DEVELOPER_SKIP_GIT_COMMIT=true).";
+    }
+  } else if (patchText.trim()) {
+    applyStatus = "\n\n(Patch not applied: DEVELOPER_SKIP_GIT_APPLY=true)";
+  }
+
   await jira.addComment(
     issueKey,
-    `Developer output for ${issueKey}.\n\n${developerResult.implementationPlan || ""}`
+    `Developer output for ${issueKey}.${applyStatus}\n\n${developerResult.implementationPlan || ""}`
   );
 
   return {
     issueKey,
     targetRepoPath: resolvedRepoPath,
+    developerBranch: developerBranch || undefined,
+    developerCommitSha: developerCommitSha || undefined,
     ...developerResult,
   };
 }
