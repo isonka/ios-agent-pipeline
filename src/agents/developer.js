@@ -1,7 +1,12 @@
 import { jiraDescriptionPlain } from "../jira/jiraDescriptionPlain.js";
-import { generateJsonWithRepair } from "./llmJson.js";
+import { stripDiffMarkdownFences } from "../services/applyUnifiedDiffToRepo.js";
+import { extractJsonCandidate, generateJsonWithRepair } from "./llmJson.js";
 
 const DEVELOPER_SYSTEM_PROMPT = "You are a Senior iOS Developer agent. Output only valid JSON.";
+
+const DEVELOPER_EXECUTE_SYSTEM_PROMPT =
+  "You are a Senior iOS Developer agent. You output git unified diffs that `git apply` accepts. " +
+  "Prefer a raw diff (no JSON). If you use JSON, it must parse: one object with string field patchProposal only; escape quotes and newlines inside the string.";
 
 const DEVELOPER_FULL_SCHEMA =
   '{"implementationPlan":"short plan","patchProposal":"unified diff patch text only","riskNotes":"main risks","testStubs":"tests developer expects to add/run"}';
@@ -10,6 +15,42 @@ const DEVELOPER_PLAN_SCHEMA =
   '{"implementationPlan":"short plan","riskNotes":"main risks","testStubs":"tests developer expects to add/run"}';
 
 const DEVELOPER_EXECUTE_SCHEMA = '{"patchProposal":"unified diff patch text only"}';
+
+function looksLikeUnifiedDiff(text) {
+  const s = String(text || "").trim();
+  return /^diff --git/m.test(s) || /^---\s+a\//m.test(s);
+}
+
+function normalizePatchProposal(text) {
+  const d = String(text || "").replace(/\r\n/g, "\n");
+  return d.endsWith("\n") ? d : `${d}\n`;
+}
+
+/**
+ * Execute step must accept raw diffs: JSON wrapping breaks when hunks contain `{`/`}` (extractJsonCandidate
+ * would slice the wrong span). Prefer raw diff, then JSON.
+ */
+export function extractPatchFromDeveloperExecuteResponse(text) {
+  if (!text || !String(text).trim()) return null;
+
+  const afterFence = stripDiffMarkdownFences(text);
+  const trimmed = afterFence.trim();
+  if (looksLikeUnifiedDiff(trimmed)) {
+    return normalizePatchProposal(trimmed);
+  }
+
+  try {
+    const jsonCandidate = extractJsonCandidate(text);
+    const j = JSON.parse(jsonCandidate);
+    if (typeof j?.patchProposal === "string" && j.patchProposal.trim()) {
+      return normalizePatchProposal(stripDiffMarkdownFences(j.patchProposal));
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
 
 function buildDeveloperBaseParts({ issue, architectPlanText, context }) {
   const description = jiraDescriptionPlain(issue.fields?.description).slice(0, 8000);
@@ -61,9 +102,10 @@ function buildDeveloperExecutePrompt({ issue, architectPlanText, developerDraft,
     "",
     draftBlock,
     "",
-    "TASK: The plan above was approved. Output only a unified diff patch that implements it.",
-    `SCHEMA ${DEVELOPER_EXECUTE_SCHEMA}`,
-    "JSON only.",
+    "TASK: The plan above was approved. Output a unified diff that implements it (`git apply` must accept it).",
+    "OUTPUT (choose one):",
+    "— Preferred: raw unified diff only. First line `diff --git` or `--- a/`. No prose, no JSON.",
+    "— Or: valid JSON only, exactly " + DEVELOPER_EXECUTE_SCHEMA + " (escape every quote and newline inside patchProposal).",
   ].join("\n");
 }
 
@@ -88,19 +130,43 @@ export async function runDeveloperPlan({ llm, issue, architectPlanText, context 
 }
 
 export async function runDeveloperExecute({ llm, issue, architectPlanText, developerDraft, context }) {
-  const parsed = await generateJsonWithRepair({
-    llm,
-    systemPrompt: DEVELOPER_SYSTEM_PROMPT,
-    userPrompt: buildDeveloperExecutePrompt({ issue, architectPlanText, developerDraft, context }),
-    failurePrefix: "Developer execute returned non-JSON content",
-    repairSchemaDescription: DEVELOPER_EXECUTE_SCHEMA,
+  const userPrompt = buildDeveloperExecutePrompt({ issue, architectPlanText, developerDraft, context });
+
+  const firstText = await llm.generateText({
+    systemPrompt: DEVELOPER_EXECUTE_SYSTEM_PROMPT,
+    userPrompt,
+    temperature: 0,
   });
 
-  if (typeof parsed?.patchProposal !== "string") {
-    throw new Error("Developer execute output missing patchProposal string.");
+  let patch = extractPatchFromDeveloperExecuteResponse(firstText);
+  if (!patch) {
+    const repairedText = await llm.generateText({
+      systemPrompt: DEVELOPER_EXECUTE_SYSTEM_PROMPT,
+      userPrompt: [
+        userPrompt,
+        "",
+        "YOUR_PREVIOUS_REPLY_WAS_NOT_A_USABLE_PATCH.",
+        "Output ONLY a raw unified diff now. First line MUST be `diff --git` or `--- a/`.",
+        "Do not use JSON. Do not wrap in markdown fences.",
+        "",
+        "PREVIOUS:",
+        String(firstText).slice(0, 80000),
+      ].join("\n"),
+      temperature: 0,
+    });
+    patch = extractPatchFromDeveloperExecuteResponse(repairedText);
   }
 
-  return { patchProposal: parsed.patchProposal };
+  if (!patch?.trim()) {
+    const preview = String(firstText || "")
+      .slice(0, 400)
+      .replace(/\s+/g, " ");
+    throw new Error(
+      `Developer execute returned no usable unified diff (raw diff or JSON with patchProposal). Preview: ${preview}`
+    );
+  }
+
+  return { patchProposal: patch };
 }
 
 /** One LLM call: full developer JSON (plan + patch + notes). */

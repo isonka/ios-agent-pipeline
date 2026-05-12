@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runDeveloper, runDeveloperPlan, runDeveloperExecute } from "../src/agents/developer.js";
+import {
+  runDeveloper,
+  runDeveloperPlan,
+  runDeveloperExecute,
+  extractPatchFromDeveloperExecuteResponse,
+} from "../src/agents/developer.js";
 
 test("runDeveloper parses fenced JSON from first completion", async () => {
   const llm = {
@@ -92,5 +97,52 @@ test("runDeveloperExecute returns patchProposal", async () => {
     context: { docs: [] },
   });
 
+  assert.ok(out.patchProposal.includes("diff --git"));
+});
+
+test("extractPatchFromDeveloperExecuteResponse accepts raw diff with braces in hunks", () => {
+  const diff = `diff --git a/Foo.swift b/Foo.swift
+--- a/Foo.swift
++++ b/Foo.swift
+@@ -1 +1 @@
+-let x = 1
++let x = { 1 }
+`;
+  const out = extractPatchFromDeveloperExecuteResponse(diff);
+  assert.ok(out.includes("+let x = { 1 }"));
+});
+
+test("extractPatchFromDeveloperExecuteResponse parses JSON patchProposal", () => {
+  const out = extractPatchFromDeveloperExecuteResponse(
+    JSON.stringify({ patchProposal: "diff --git a/x b/x\n" })
+  );
+  assert.ok(out.includes("diff --git"));
+});
+
+test("runDeveloperExecute uses repair when first completion is not a patch", async () => {
+  let n = 0;
+  const good = `diff --git a/x b/x
+--- a/x
++++ b/x
+@@ -1 +1 @@
+-a
++b
+`;
+  const llm = {
+    async generateText() {
+      n += 1;
+      if (n === 1) return "Here is a helpful summary without a diff.";
+      return good;
+    },
+  };
+
+  const out = await runDeveloperExecute({
+    llm,
+    issue: { key: "IOS-5", fields: { summary: "S" } },
+    architectPlanText: "scope",
+    developerDraft: { implementationPlan: "p", riskNotes: "", testStubs: "" },
+    context: { docs: [] },
+  });
+  assert.equal(n, 2);
   assert.ok(out.patchProposal.includes("diff --git"));
 });

@@ -94,7 +94,7 @@ Request body: `issueKey`, optional `targetRepoPath`.
 
 ### `POST /pipeline/developer-execute`
 
-Reads the latest developer plan from Jira comments, runs the patch LLM, then **`git apply`** in the **target repo**. On success it creates a **local** branch and **one commit** (same skip flags as below). Jira comment includes apply status, branch name, short commit hash, and the diff (truncated). Requires `git` on the server `PATH`, and the target repo should have `user.name` / `user.email` configured for commits.
+Reads the latest developer plan from Jira comments, runs the patch LLM (expects a **raw unified diff** first; JSON with `patchProposal` is optional), then **`git apply`** in the **target repo**. On success it creates a **local** branch and **one commit** (same skip flags as below). Jira comment includes apply status, branch name, short commit hash, and the diff (truncated). Requires `git` on the server `PATH`, and the target repo should have `user.name` / `user.email` configured for commits.
 
 Branch name convention: **`feat/{userSlug}/{ISSUEKEY}-{summary-slug}`** (example: `feat/okarsli/MP-17833-add-login-flow`). **`userSlug`** comes from, in order: env **`DEVELOPER_BRANCH_USER_SLUG`**, else Jira assignee **email local-part**, else slugified **displayName**, else `developer`.
 
