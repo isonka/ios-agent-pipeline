@@ -315,11 +315,10 @@ app.post("/pipeline/run-reviewer", async (req, res) => {
 
 app.post("/hooks/jira/comment", (req, res) => {
   const config = envConfig();
-  if (!config.jiraWebhookSecret) {
-    return res.status(503).json({ error: "JIRA_WEBHOOK_SECRET is not set; webhook disabled." });
-  }
-  if (req.body?.secret !== config.jiraWebhookSecret) {
-    return res.status(401).json({ error: "Invalid secret" });
+  if (config.jiraWebhookSecret) {
+    if (req.body?.secret !== config.jiraWebhookSecret) {
+      return res.status(401).json({ error: "Invalid or missing secret" });
+    }
   }
 
   const issueKey = req.body?.issueKey || req.body?.issue;
@@ -363,8 +362,11 @@ async function start() {
     console.log(`iOS Agent Pipeline listening on :${config.port}`);
     console.log(`LLM provider: bedrock`);
     console.log(`Bedrock model: ${config.bedrockModelId}`);
-    if (config.jiraWebhookSecret) {
-      console.log("Jira comment webhook enabled: POST /hooks/jira/comment");
+    console.log("Jira architect refine webhook: POST /hooks/jira/comment");
+    if (!config.jiraWebhookSecret) {
+      console.warn(
+        "JIRA_WEBHOOK_SECRET is unset: webhook accepts requests without body.secret (local/dev only). Set secret before exposing this URL publicly."
+      );
     }
   });
 }
