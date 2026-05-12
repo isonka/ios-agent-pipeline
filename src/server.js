@@ -13,6 +13,8 @@ import { JiraClient } from "./integrations/jiraClient.js";
 import { runDeveloper } from "./agents/developer.js";
 import { runTester } from "./agents/tester.js";
 import { runReviewer } from "./agents/reviewer.js";
+import { shouldTriggerArchitectRefineFromComment } from "./agents/architectRefineStory.js";
+import { runArchitectRefineJob } from "./hooks/runArchitectRefineJob.js";
 
 const app = express();
 app.use(express.json());
@@ -311,6 +313,49 @@ app.post("/pipeline/run-reviewer", async (req, res) => {
   }
 });
 
+app.post("/hooks/jira/comment", (req, res) => {
+  const config = envConfig();
+  if (!config.jiraWebhookSecret) {
+    return res.status(503).json({ error: "JIRA_WEBHOOK_SECRET is not set; webhook disabled." });
+  }
+  if (req.body?.secret !== config.jiraWebhookSecret) {
+    return res.status(401).json({ error: "Invalid secret" });
+  }
+
+  const issueKey = req.body?.issueKey || req.body?.issue;
+  const commentBody = req.body?.commentBody ?? req.body?.comment ?? "";
+  if (!issueKey) {
+    return res.status(400).json({ error: "issueKey is required" });
+  }
+
+  if (!shouldTriggerArchitectRefineFromComment(commentBody)) {
+    return res.status(200).json({
+      status: "ignored",
+      reason: "Comment does not request @architect refine.",
+    });
+  }
+
+  const targetRepoPath = req.body?.targetRepoPath || "";
+
+  res.status(202).json({ status: "accepted", issueKey });
+
+  void (async () => {
+    const cfg = envConfig();
+    const deps = createDependencies(cfg);
+    try {
+      await runArchitectRefineJob({
+        jira: deps.jira,
+        llm: deps.llm,
+        issueKey,
+        targetRepoPath,
+        targetFallback: cfg.targetProjectPathFallback,
+      });
+    } catch (err) {
+      await deps.jira.addCommentParagraphs(issueKey, `Architect refine failed: ${err.message}`).catch(() => {});
+    }
+  })();
+});
+
 async function start() {
   await validateEnv();
   const config = envConfig();
@@ -318,6 +363,9 @@ async function start() {
     console.log(`iOS Agent Pipeline listening on :${config.port}`);
     console.log(`LLM provider: bedrock`);
     console.log(`Bedrock model: ${config.bedrockModelId}`);
+    if (config.jiraWebhookSecret) {
+      console.log("Jira comment webhook enabled: POST /hooks/jira/comment");
+    }
   });
 }
 

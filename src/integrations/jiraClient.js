@@ -34,12 +34,45 @@ export class JiraClient {
     return this.request("GET", `/rest/api/3/issue/${issueKey}`);
   }
 
-  async addComment(issueKey, body) {
+  async addComment(issueKey, text) {
     return this.request("POST", `/rest/api/3/issue/${issueKey}/comment`, {
       body: {
-        type: "doc",
-        version: 1,
-        content: [{ type: "paragraph", content: [{ type: "text", text: body }] }],
+        body: {
+          type: "doc",
+          version: 1,
+          content: [{ type: "paragraph", content: [{ type: "text", text: String(text) }] }],
+        },
+      },
+    });
+  }
+
+  /**
+   * Split on blank lines into separate ADF paragraphs so markdown-ish refine output renders readably.
+   */
+  async addCommentParagraphs(issueKey, text) {
+    const chunks = String(text)
+      .split(/\n\n+/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)
+      .map((chunk) => chunk.slice(0, 15000));
+
+    const content = chunks.map((chunk) => ({
+      type: "paragraph",
+      content: [{ type: "text", text: chunk.replace(/\u0000/g, "") }],
+    }));
+
+    const docContent =
+      content.length > 0
+        ? content
+        : [{ type: "paragraph", content: [{ type: "text", text: String(text).slice(0, 15000) }] }];
+
+    return this.request("POST", `/rest/api/3/issue/${issueKey}/comment`, {
+      body: {
+        body: {
+          type: "doc",
+          version: 1,
+          content: docContent,
+        },
       },
     });
   }
